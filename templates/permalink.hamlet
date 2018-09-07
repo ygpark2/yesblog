@@ -1,0 +1,45 @@
+<div .page-header>
+  <h2>#{articleTitle}</h2></div>
+  <div .row>
+    <div .col-md-9>
+      <p><i class="glyphicon glyphicon-calendar"></i>_{MsgPostedTime published}
+      <p><i class="glyphicon glyphicon-user"></i>_{MsgPostedAuthor screenAuthor}
+      $if not (null tags)
+        <div .tags>
+          <i .glyphicon .glyphicon-tags>
+          <ul .tag-list>
+            $forall tag <- tags
+              <li>
+                <a href=@{TagR tag}>
+                  #{tag}
+
+      <div #article>
+        <article>#{articleContent}<br/>
+      <hr>
+      $if null comments
+        <h3>_{MsgArticleNoComment}
+      $else
+        <div>
+        <h3>Comment</h3>
+          $forall Comment name content _ posted <- comments
+            <article>
+              <div .name>
+                <h4>#{name}:
+                <span .tooltip .gray>#{show posted}
+              <div .well .comment-content>
+                #{content}
+      <hr>
+      $maybe _ <- maid
+        <h3 #comment>_{MsgAddComment}
+        <form method="post" enctype="#{enctype}">
+            ^{commentWidget}
+          <input type="submit" .btn .btn-primary .rbtn value=_{MsgArticleCommentPostButton}>
+      $nothing
+        <h3 #comment>
+         _{MsgMustBeLoggedIn} <a href=@{AuthR LoginR}>_{MsgLogin}</a>
+      <hr>
+      <ul .pager .pull-left>
+        <li .previous><a href=@{BlogViewR} .btn><i class="glyphicon glyphicon-circle-arrow-left"></i>_{MsgBackToRecentPost}
+    <div .col-md-3>
+       ^{sidebarWidget}
+    <hr>

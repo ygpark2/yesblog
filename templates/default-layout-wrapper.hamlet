@@ -46,7 +46,53 @@ $newline never
     <script>
       document.documentElement.className = document.documentElement.className.replace(/\bno-js\b/,'js');
   <body>
+    <div class="navbar navbar-default navbar-inverse">
+     <div class="navbar-header">
+       <button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-collapse">
+         <span class="icon-bar"></span>
+         <span class="icon-bar"></span>
+         <span class="icon-bar"></span>
+       <a class="navbar-brand" href=@{HomeR}><i>#{blogTitle}</i>
+     <div class="navbar-collapse collapse">
+       <ul class="nav navbar-nav">
+              <li>
+                <a href=@{BlogViewR}>Blog
+              <li>
+                <a href=@{AboutR}>About
+              <li .dropdown>
+                <a href="#" .dropdown-toggle data-toggle="dropdown">
+                  Control
+                <ul class="dropdown-menu">
+                  $maybe _ <- maid
+                    $if admin
+                      <li>
+                        <a href=@{AdminR}>Admin
+
+                    <li><a href=@{UserSettingR}>User Profile</a>
+                    <li><a href=@{AuthR LogoutR}>Logout</a>
+                  $nothing
+                    <li><a href=@{AuthR LoginR}>Login</a>
+                    <li><a href=@{HomeR}>Home</a>
+    <div .container>
     ^{pageBody pc}
+
+    <div .row>
+      <div ."col-md-7 col-md-offset-1">
+        <footer>
+          <a href="https://github.com/cosmo0920/Ahblog">Code</a> licensed under the <a href="http://opensource.org/licenses/MIT">MIT License</a><br />
+          see <a href=@{ArchiveR}>archive</a> of all posts
+
+    <script src=@{StaticR js_bootstrap_min_js}>
+    <script src=@{StaticR js_bootstrap_select_min_js}>
+    <script src=@{StaticR js_google_code_prettify_prettify_js}>
+    <script type="text/javascript">
+      try {
+        window.addEventListener("load",prettyPrint,false);
+      } catch(e) {
+        window.attachEvent("onload",prettyPrint);
+      }
+    </script>
+
 
     $maybe analytics <- appAnalytics $ appSettings master
       <script>

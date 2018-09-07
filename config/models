@@ -6,13 +6,31 @@ User
     password Text Maybe
     UniqueUser ident
     deriving Typeable
-Email
-    email Text
-    userId UserId Maybe
-    verkey Text Maybe
-    UniqueEmail email
-Comment json -- Adding "json" causes ToJSON and FromJSON instances to be derived.
-    message Text
-    userId UserId Maybe
-    deriving Eq
+
+Comment
+    name Text
+    content Text
+    article ArticleId
+    posted UTCTime default=CURRENT_TIMESTAMP
+
+Article
+    author UserId Eq
+    title   Text
+    content Markdown
+    slug Text
+    draft Bool default=0 -- sqlite3 data type Bool is 1 (True) or 0 (False)
+    createdAt  UTCTime default=CURRENT_TIMESTAMP
+    UniqueSlug slug
+    deriving Show instance
+
+Image
+    filename String
+    description Textarea Maybe
+    date UTCTime default=CURRENT_TIMESTAMP
+    UniqueImage filename
     deriving Show
+
+Tag
+    name    Text Eq
+    article ArticleId Eq
+    deriving Show Eq

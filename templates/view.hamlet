@@ -1,0 +1,21 @@
+<div .page-header>
+  <h1>
+    _{MsgArticle}
+<div .row>
+  <div .col-md-9>
+    $if null articles
+      <h3> _{MsgNoArticle}
+    $else
+      $forall Entity _ article <- articles
+        <div .well>
+          ^{articleInfo article}
+          <a href=@{PermalinkR $ articleSlug article}>
+            _{MsgPermalink}
+          |
+          <a href=@{PermalinkR $ articleSlug article}#comment>
+            _{MsgComment}
+  <div .col-md-3>
+    ^{sidebarWidget}
+<hr>
+<div .pagination>
+  ^{widget}
