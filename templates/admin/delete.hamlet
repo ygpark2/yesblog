@@ -1,0 +1,4 @@
+<h1>Delete article</h1>
+<p>Are you sure you want to delete this article?
+<form method=post action=@{ArticleDeleteR articleId}>
+  <button type="submit">Delete</button>

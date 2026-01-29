@@ -1,0 +1,4 @@
+<h1>New article</h1>
+<form method=post action=@{NewBlogR} enctype=#{enctype}>
+  ^{articleWidget}
+  <button type="submit">Publish</button>

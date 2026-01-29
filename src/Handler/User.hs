@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Handler.User where
 
 import Import
@@ -9,19 +11,18 @@ getUserSettingR = do
   Entity key user <- requireAuth
   (widget, enctype) <- generateFormPost userForm
   defaultLayout $ do
-    setTitleI MsgUserSetting
+    setTitle "User Settings"
     $(widgetFile "user-setting")
 
 postUserSettingR :: Handler Html
 postUserSettingR = do
   Entity key _ <- requireAuth
   ((result, _), _) <- runFormPost userForm
-  liftIO $ print result
   case result of
     FormSuccess newUser -> do
          runDB $ replace key newUser
          redirect UserSettingR
-    _ -> permissionDeniedI MsgUserHaveNotPermission
+    _ -> permissionDenied "Not authorized"
 
 postLangR :: Handler ()
 postLangR = do

@@ -6,7 +6,6 @@
 module Handler.Home where
 
 import Import
-import Yesod.Form.Bootstrap3 (BootstrapFormLayout (..), renderBootstrap3)
 import Text.Julius (RawJS (..))
 
 -- Define our data that will be used for creating the form.
@@ -30,6 +29,8 @@ getHomeR = do
     allComments <- runDB $ getAllComments
 
     defaultLayout $ do
+        let title :: Text
+            title = "YesBlog"
         let (commentFormId, commentTextareaId, commentListId) = commentIds
         aDomId <- newIdent
         setTitle "Welcome To Yesod!"
@@ -45,26 +46,17 @@ postHomeR = do
     allComments <- runDB $ getAllComments
 
     defaultLayout $ do
+        let title :: Text
+            title = "YesBlog"
         let (commentFormId, commentTextareaId, commentListId) = commentIds
         aDomId <- newIdent
         setTitle "Welcome To Yesod!"
         $(widgetFile "homepage")
 
 sampleForm :: Form FileForm
-sampleForm = renderBootstrap3 BootstrapBasicForm $ FileForm
-    <$> fileAFormReq "Choose a file"
-    <*> areq textField textSettings Nothing
-    -- Add attributes like the placeholder and CSS classes.
-    where textSettings = FieldSettings
-            { fsLabel = "What's on the file?"
-            , fsTooltip = Nothing
-            , fsId = Nothing
-            , fsName = Nothing
-            , fsAttrs =
-                [ ("class", "form-control")
-                , ("placeholder", "File description")
-                ]
-            }
+sampleForm = renderDivs $ FileForm
+    <$> fileAFormReq (fieldSettingsLabel ("Choose a file" :: Text))
+    <*> areq textField (fieldSettingsLabel ("Description" :: Text)) Nothing
 
 commentIds :: (Text, Text, Text)
 commentIds = ("js-commentForm", "js-createCommentTextarea", "js-commentList")

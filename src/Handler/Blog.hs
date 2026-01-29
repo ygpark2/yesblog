@@ -1,8 +1,9 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Handler.Blog where
 
 import Import
-import Yesod.Paginator
-import Data.Time.Format.Human
 import Data.Time
 import Data.Maybe
 import Data.List (head, sortBy)
@@ -20,7 +21,7 @@ getBlogFeedR :: Handler RepRss
 getBlogFeedR = do
   articles <- runDB $ selectList [ArticleDraft !=. True][Desc ArticleCreatedAt, LimitTo 10]
   title <- getBlogTitle
-  let entries = flip map articles $ \(Entity _ article) ->
+  let entries = Prelude.map (\(Entity _ article) ->
         FeedEntry {
             feedEntryLink = PermalinkR $ articleSlug article
           , feedEntryUpdated = articleCreatedAt article
@@ -28,39 +29,42 @@ getBlogFeedR = do
           , feedEntryContent = toHtml $ makeBrief 500 $ markdownToText $ articleContent article
           , feedEntryEnclosure = Nothing
           }
-  let feed = Feed {
+        ) articles
+  case articles of
+   [] -> notFound
+   (Entity _ firstArticle:_) -> do
+    let feed = Feed {
           feedTitle = "Blog - " `T.append` title
         , feedLinkSelf = BlogFeedR
         , feedLinkHome = BlogViewR
         , feedAuthor = "cosmo__"
-        , feedDescription = "http://cosmo0920.github.com/Ahblog"
+        , feedDescription = toHtml ("http://cosmo0920.github.com/Ahblog" :: Text)
         , feedLanguage = "ja"
-        , feedUpdated = articleCreatedAt $ entityVal $ head articles
+        , feedUpdated = articleCreatedAt firstArticle
         , feedEntries = entries
         , feedLogo = Nothing
         }
-  case articles of
-   [] -> notFound
-   _  -> rssFeed feed
+    rssFeed feed
 
 getBlogViewR :: Handler Html
 getBlogViewR = do
   -- Get the list of articles inside the database
   let page = 10
-  (articles, widget, articleArchives) <- runDB $ do
-    (articles, widget) <- selectPaginated page [ArticleDraft !=. True] [Desc ArticleCreatedAt]
-    articleArchives    <- selectList [ArticleDraft !=. True] [Desc ArticleCreatedAt, LimitTo 10]
-    return (articles, widget, articleArchives)
+  (articles, articleArchives) <- runDB $ do
+    articles <- selectList [ArticleDraft !=. True] [Desc ArticleCreatedAt, LimitTo page]
+    articleArchives <- selectList [ArticleDraft !=. True] [Desc ArticleCreatedAt, LimitTo 10]
+    return (articles, articleArchives)
   title <- getBlogTitle
   -- We'll need the two "objects": articleWidget and enctype
   -- to construct the form (see templates/articles.hamlet).
   defaultLayout $ do
+    let hasArticles = not (Prelude.null articles)
     setTitle $ toHtml title
     $(widgetFile "view")
 
 getSearchR :: Handler Html
 getSearchR = do
-    searchString <- runInputGet $ fromMaybe "" <$> iopt (searchField True) "q"
+    searchString <- runInputGet $ fromMaybe ("" :: Text) <$> iopt (searchField True) ("q" :: Text)
     articles <-
        if searchString /= ""
        then selectArticles searchString
@@ -68,6 +72,7 @@ getSearchR = do
 
     now <- liftIO $ getCurrentTime
     defaultLayout $ do
+      let hasArticles = not (Prelude.null articles)
       $(widgetFile "search")
   where
     selectArticles :: Text -> Handler [Entity Article]
@@ -83,8 +88,12 @@ getSearchR = do
 getTagR :: Text -> Handler Html
 getTagR tag = do
   articles <- runDB $ do
-    mapM (get404 . tagArticle . entityVal) =<< selectList [TagName ==. tag] []
-  when (null articles) notFound
+    mapM (\e -> get404 (tagArticle (entityVal e))) =<< selectList [TagName ==. tag] []
+  when (Prelude.null articles) notFound
   defaultLayout $ do
-    setTitleI MsgTaggedArticle
+    let hasArticles = not (Prelude.null articles)
+    setTitle "Tagged articles"
     $(widgetFile "inline/tag")
+
+getBlogTitle :: Handler Text
+getBlogTitle = pure "YesBlog"

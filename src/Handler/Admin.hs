@@ -1,12 +1,14 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Handler.Admin where
 
 
 import Import
-import Yesod.Paginator
 import Yesod.Auth
 import Data.Time
-import Data.Time.Format.Human
-import Control.Monad
+import Data.Time.Format (defaultTimeLocale, formatTime)
+import qualified Control.Monad as CM
 import Helper.Form
 import Helper.MakeBrief
 import Helper.Sidebar
@@ -16,18 +18,19 @@ getAdminR :: Handler Html
 getAdminR = do
   -- Get the list of articles inside the database
   let page = 10
-  username <- userScreenName . entityVal <$> requireAuth
-  (articles, widget, users, comments) <- runDB $ do
-     (articles, widget) <- selectPaginated page [] [Desc ArticleCreatedAt]
-     users              <- selectList [] [Desc UserScreenName]
-     comments           <- selectList [] [Desc CommentPosted]
-     return (articles, widget, users, comments)
+  Entity _ user <- requireAuth
+  let username = userIdent user
+  (articles, users, comments) <- runDB $ do
+     articles <- selectList [] [Desc ArticleCreatedAt, LimitTo page]
+     users <- selectList [] [Desc UserIdent]
+     comments <- selectList [] [Desc CommentPosted]
+     return (articles, users, comments)
   -- We'll need the two "objects": articleWidget and enctype
   -- to construct the form (see templates/articles.hamlet).
   (articleWidget, enctype) <- generateFormPost entryForm
   maid <- maybeAuthId
   defaultLayout $ do
-    setTitleI MsgAdminPageTitle
+    setTitle "Admin"
     $(widgetFile "admin/index")
 
 postAdminR :: Handler Html
@@ -37,7 +40,7 @@ postAdminR = do
     FormSuccess (article, tags) -> do
       articleId <- runDB $ do
         _article <- insert article
-        forM_ tags $ \tag -> insert $ Tag tag _article
+        CM.forM_ tags $ \tag -> insert $ Tag tag _article
         return _article
       renderer <- getUrlRenderParams
       let html = [hamlet|<span .notice><h4>#{articleTitle article}</h4>
@@ -46,12 +49,13 @@ postAdminR = do
       setMessage $ toHtml $ html renderer
       redirect $ ArticleR articleId
     _ -> defaultLayout $ do
-            setTitleI MsgPostArticleFailure
+            setTitle "Post failed"
             $(widgetFile "admin/articleAddError")
 
 getNewBlogR :: Handler Html
 getNewBlogR = do
-  username <- userScreenName . entityVal <$> requireAuth
+  Entity _ user <- requireAuth
+  let username = userIdent user
   -- Get the list of articles inside the database
   (articles, images) <- runDB $ do
     articles <- selectList [][Desc ArticleCreatedAt]
@@ -63,21 +67,24 @@ getNewBlogR = do
   (articleWidget, enctype) <- generateFormPost entryForm
   maid <- maybeAuthId
   defaultLayout $ do
-    setTitleI MsgAdminPageTitle
+    setTitle "Admin"
     $(widgetFile "admin/new")
 
 getArticleR :: ArticleId -> Handler Html
 getArticleR articleId = do
   now <- liftIO $ getCurrentTime
   (comments, article, author, tags) <- runDB $ do
-    comments <- map entityVal <$>
+    comments <- Prelude.map entityVal <$>
                 selectList [CommentArticle ==. articleId] [Asc CommentPosted]
     article  <- get404 articleId
-    Entity key Article {articleAuthor, ..} <- getBy404 $ UniqueSlug (articleSlug article)
-    author <- get404 articleAuthor
-    tags <- map (tagName . entityVal) <$> selectList [TagArticle ==. key] []
+    Entity key articleEntity <- getBy404 $ UniqueSlug (articleSlug article)
+    let authorId = articleAuthor articleEntity
+    author <- get404 authorId
+    tags <- Prelude.map (\e -> tagName (entityVal e)) <$> selectList [TagArticle ==. key] []
     return (comments, article, author, tags)
-  let screenAuthor = userScreenName author
+  let screenAuthor = userIdent author
+  let hasTags = not (Prelude.null tags)
+  let hasComments = not (Prelude.null comments)
   ((_, commentWidget), enctype) <- runFormPost $ commentForm articleId
   defaultLayout $ do
     setTitle $ toHtml $ articleTitle article
@@ -89,22 +96,22 @@ postArticleR articleId = do
   case res of
     FormSuccess comment -> do
       _ <- runDB $ insert comment
-      setMessageI MsgPostArticleCommentSuccess
+      setMessage "Comment posted."
       redirect $ ArticleR articleId
     _ -> do
-      setMessageI MsgPostArticleCommentFailure
+      setMessage "Could not post comment."
       redirect $ ArticleR articleId
 
 postNewBlogR :: Handler Html
 postNewBlogR = do
   (Entity _ user) <- requireAuth
-  let username = userScreenName user
+  let username = userIdent user
   ((res,articleWidget),enctype) <- runFormPost entryForm
   case res of
     FormSuccess (article, tags) -> do
       articleId <- runDB $ do
         _article <- insert article
-        forM_ tags $ \tag -> insert $ Tag tag _article
+        CM.forM_ tags $ \tag -> insert $ Tag tag _article
         return _article
       renderer <- getUrlRenderParams
       let html = [hamlet|<span .notice><h4>#{articleTitle article}</h4>
@@ -113,7 +120,7 @@ postNewBlogR = do
       setMessage $ toHtml $ html renderer
       redirect $ ArticleR articleId
     _ -> defaultLayout $ do
-           setTitleI MsgPostArticleFailure
+           setTitle "Post failed"
            $(widgetFile "admin/articleAddError")
 
 getArticleEditR :: ArticleId -> Handler Html
@@ -121,20 +128,20 @@ getArticleEditR articleId = do
   (Entity _ user) <- requireAuth
   (post, oldTags) <- runDB $ do
     post <- get404 articleId
-    oldTags <- map (\(Entity _ t) -> tagName t)
+    oldTags <- Prelude.map (\(Entity _ t) -> tagName t)
                <$> (selectList [TagArticle ==. articleId] [])
     return (post, oldTags)
-  let username = userScreenName user
+  let username = userIdent user
   maid <- maybeAuthId
   (postWidget, enctype) <- generateFormPost $ (postForm (Just post) (Just oldTags))
   defaultLayout $ do
-    setTitleI MsgArticleEdit
+    setTitle "Edit article"
     $(widgetFile "admin/edit")
 
 postPreviewR :: Handler Html
 postPreviewR = do
   (Entity _ user) <- requireAuth
-  let username = userScreenName user
+  let username = userIdent user
   ((res,previewWidget),enctype) <- runFormPost entryForm
   case res of
     FormSuccess (article, tags) -> do
@@ -142,14 +149,14 @@ postPreviewR = do
       defaultLayout $ do
         $(widgetFile "admin/preview")
     _ -> do
-      setMessageI MsgArticleSomethingWentWrong
+      setMessage "Something went wrong."
       redirect NewBlogR
 
 postArticleEditR :: ArticleId -> Handler Html
 postArticleEditR articleId = do
   maid <- maybeAuthId
   (Entity _ user) <- requireAuth
-  let username = userScreenName user
+  let username = userIdent user
   ((res, postWidget), enctype) <- runFormPost entryForm
   case res of
        FormSuccess (post, tags) -> do
@@ -159,7 +166,7 @@ postArticleEditR articleId = do
                             , ArticleSlug    =. articleSlug    post
                             , ArticleDraft   =. articleDraft   post]
            deleteWhere [TagArticle ==. articleId]
-           forM_ tags $ \tag -> insert $ Tag tag articleId
+           CM.forM_ tags $ \tag -> insert $ Tag tag articleId
          renderer <- getUrlRenderParams
          let html = [hamlet|<span .notice><h4>#{articleTitle post}</h4>
                                           <p> updated
@@ -167,19 +174,19 @@ postArticleEditR articleId = do
          setMessage $ toHtml $ html renderer
          redirect $ ArticleR articleId
        _ -> defaultLayout $ do
-         setTitleI MsgPostArticleFailure
+         setTitle "Post failed"
          $(widgetFile "admin/edit")
 
 getArticleDeleteR :: ArticleId -> Handler Html
 getArticleDeleteR articleId = do
   (article, oldTags) <- runDB $ do
     _article <- get404 articleId
-    oldTags <- map (\(Entity _ t) -> tagName t)
+    oldTags <- Prelude.map (\(Entity _ t) -> tagName t)
                  <$> (selectList [TagArticle ==. articleId] [])
     return (_article, oldTags)
   (postWidget, enctype) <- generateFormPost $ (postForm (Just article) (Just oldTags))
   defaultLayout $ do
-    setTitleI MsgArticleDelete
+    setTitle "Delete article"
     $(widgetFile "admin/delete")
 
 postArticleDeleteR :: ArticleId -> Handler Html
@@ -218,10 +225,10 @@ getUserDeleteR usrId = do
         delete usrId
         return _user
       renderer <- getUrlRenderParams
-      let html = [hamlet|<span .notice><h4>User:#{userScreenName deleteuser}</h4>
+      let html = [hamlet|<span .notice><h4>User:#{userIdent deleteuser}</h4>
                                        <p> deleted|]
       setMessage $ toHtml $ html renderer
       redirect $ AdminR
    else do
-     setMessageI MsgDeleteOneselfError
+     setMessage "You cannot delete yourself."
      redirect $ AdminR

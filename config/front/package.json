@@ -1,0 +1,11 @@
+{
+  "name": "hkforum-tailwind",
+  "private": true,
+  "devDependencies": {
+    "tailwindcss": "4.1.18",
+    "@tailwindcss/cli": "4.1.18"
+  },
+  "scripts": {
+    "build:css": "tailwindcss -c ./tailwind.config.js -i ./tailwind.input.css -o ../../static/css/tailwind.css --minify"
+  }
+}

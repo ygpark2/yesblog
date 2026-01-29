@@ -1,0 +1,14 @@
+<div .page-header>
+  <h1>Search</h1>
+
+<form method=get action=@{SearchR}>
+  <input type="text" name="q" value="#{searchString}">
+  <button type="submit">Search</button>
+
+$if not hasArticles
+  <p>No results.
+$else
+  <ul>
+    $forall Entity _ article <- articles
+      <li>
+        <a href=@{PermalinkR $ articleSlug article}>#{articleTitle article}

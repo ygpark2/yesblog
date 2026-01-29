@@ -1,0 +1,18 @@
+<h1>Images</h1>
+$maybe msg <- mmsg
+  <p>#{msg}
+
+<form method=post action=@{ImagesR} enctype=#{enctype}>
+  ^{widget}
+  <button type="submit">Upload</button>
+
+$if not hasImages
+  <p>No images.
+$else
+  <ul>
+    $forall Entity imageId image <- images
+      <li>
+        #{imageFilename image}
+        <form method=post action=@{ImageR imageId}>
+          <input type="hidden" name="_method" value="DELETE">
+          <button type="submit">Delete</button>

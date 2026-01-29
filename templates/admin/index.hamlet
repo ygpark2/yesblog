@@ -1,0 +1,7 @@
+<h1>Admin</h1>
+<p>Logged in as #{username}
+
+<h2>New article</h2>
+<form method=post action=@{AdminR} enctype=#{enctype}>
+  ^{articleWidget}
+  <button type="submit">Publish</button>

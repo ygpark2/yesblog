@@ -6,6 +6,6 @@ database:
   # something like:
   #
   #   database: "_env:SQLITE_DATABASE:yesblog_test.sqlite3"
-  database: yesblog_test.sqlite3
+  database: data/yesblog_test.sqlite3
 
 auth-dummy-login: true

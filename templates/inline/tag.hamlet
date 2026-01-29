@@ -1,0 +1,10 @@
+<div .page-header>
+  <h1>Tag: #{tag}
+
+$if not hasArticles
+  <p>No articles for this tag.
+$else
+  <ul>
+    $forall article <- articles
+      <li>
+        <a href=@{PermalinkR $ articleSlug article}>#{articleTitle article}

@@ -21,7 +21,7 @@ Article
     draft Bool default=0 -- sqlite3 data type Bool is 1 (True) or 0 (False)
     createdAt  UTCTime default=CURRENT_TIMESTAMP
     UniqueSlug slug
-    deriving Show instance
+    deriving Show
 
 Image
     filename String

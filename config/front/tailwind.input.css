@@ -1,0 +1,6 @@
+@import "tailwindcss";
+@source "../../templates/**/*.hamlet";
+@source "../../templates/**/*.lucius";
+@source "../../templates/**/*.julius";
+@source "../../static/**/*.{js,css}";
+@source "../../src/**/*.hs";

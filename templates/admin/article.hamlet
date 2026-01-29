@@ -1,0 +1,25 @@
+<h1>#{articleTitle article}</h1>
+<p>By #{screenAuthor}
+
+<div>
+  #{articleContent article}
+
+$if hasTags
+  <p>Tags:
+  <ul>
+    $forall tag <- tags
+      <li>#{tag}
+
+<h2>Comments</h2>
+$if not hasComments
+  <p>No comments yet.
+$else
+  $forall Comment name content _ posted <- comments
+    <div .comment>
+      <strong>#{name}</strong> (#{show posted})
+      <div>#{content}
+
+<h3>Add comment</h3>
+<form method=post action=@{ArticleR articleId} enctype=#{enctype}>
+  ^{commentWidget}
+  <button type="submit">Post</button>

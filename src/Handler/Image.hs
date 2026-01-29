@@ -1,11 +1,12 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Handler.Image where
 
 import Import
 import System.FilePath
-import Data.Text (unpack)
+import qualified Data.Text as T
 import System.Directory (removeFile, doesFileExist)
 import Data.Time
-import Data.Time.Format.Human
 import Helper.ImageForm
 
 getImagesR :: Handler Html
@@ -14,6 +15,7 @@ getImagesR = do
     images <- runDB $ selectList [ImageFilename !=. ""] [Desc ImageDate]
     mmsg <- getMessage
     now <- liftIO $ getCurrentTime
+    let hasImages = not (Prelude.null images)
     defaultLayout $ do
       $(widgetFile "admin/image")
 
@@ -29,13 +31,13 @@ postImagesR = do
             success <- runDB $ insertBy $ Image filename info date
             case success of
               Right _key -> do
-                setMessageI MsgFileSaved
+                setMessage "File saved."
                 redirect ImagesR
               Left _ -> do
-                setMessageI MsgCannotRegisterImage
+                setMessage "Could not register image."
                 redirect ImagesR
         _ -> do
-            setMessageI MsgSomethingWentWrong
+            setMessage "Something went wrong."
             redirect ImagesR
 
 deleteImageR :: ImageId -> Handler ()
@@ -49,16 +51,16 @@ deleteImageR imageId = do
 
     case (not stillExists) of
         False -> do
-            setMessageI MsgCannotRegisterImage
+            setMessage "Could not register image."
             redirect ImagesR
         True  -> do
             runDB $ delete imageId
-            setMessageI MsgFileDeleted
+            setMessage "File deleted."
             redirect ImagesR
 
 writeToServer :: FileInfo -> Handler FilePath
 writeToServer file = do
-    let filename = unpack $ fileName file
+    let filename = T.unpack $ fileName file
         path = imageFilePath filename
     liftIO $ fileMove file path
     return filename

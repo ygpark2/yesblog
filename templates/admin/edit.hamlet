@@ -1,0 +1,4 @@
+<h1>Edit article</h1>
+<form method=post action=@{ArticleEditR articleId} enctype=#{enctype}>
+  ^{postWidget}
+  <button type="submit">Save</button>

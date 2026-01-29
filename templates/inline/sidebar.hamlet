@@ -1,0 +1,6 @@
+<div .sidebar>
+  <h4>Recent posts</h4>
+  <ul>
+    $forall Entity _ article <- articleArchives
+      <li>
+        <a href=@{PermalinkR $ articleSlug article}>#{articleTitle article}
