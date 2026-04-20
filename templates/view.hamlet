@@ -13,6 +13,15 @@
           |
           <a href=@{PermalinkR $ articleSlug article}#comment>
             Comments
+      $if isJust prevPageUrl || isJust nextPageUrl
+        <nav>
+          <ul .pager>
+            $maybe url <- prevPageUrl
+              <li .previous>
+                <a href=#{url}>Newer posts
+            $maybe url <- nextPageUrl
+              <li .next>
+                <a href=#{url}>Older posts
   <div .col-md-3>
     ^{sidebarWidget}
 <hr>

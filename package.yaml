@@ -92,20 +92,24 @@ tests:
     main: Spec.hs
     source-dirs:
       - test
-      - src
     ghc-options: -Wall
     dependencies:
       - base
-      - hkforum
+      - yesblog
       - yesod-test
       - yesod-core
       - yesod
+      - yesod-auth
+      - yesod-form
       - persistent
       - persistent-sqlite
       - resourcet
       - monad-logger
+      - aeson
       - shakespeare
       - transformers
       - hspec
+      - microlens
+      - yesod-markdown
       - classy-prelude
       - classy-prelude-yesod

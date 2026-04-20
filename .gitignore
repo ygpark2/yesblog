@@ -16,6 +16,7 @@ cabal.sandbox.config
 .stack-work/
 .stack-work-devel/
 .codex/
+.vscode/
 
 *.cabal
 *.lock
@@ -25,3 +26,4 @@ cabal.sandbox.config
 *.keter
 *~
 \#*
+

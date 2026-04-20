@@ -4,6 +4,9 @@
 User
     ident Text
     password Text Maybe
+    displayName Text Maybe
+    bio Textarea Maybe
+    isAdmin Bool default=0
     UniqueUser ident
     deriving Typeable
 
@@ -11,6 +14,11 @@ Comment
     name Text
     content Text
     article ArticleId
+    posted UTCTime default=CURRENT_TIMESTAMP
+
+HomeComment
+    name Text
+    content Text
     posted UTCTime default=CURRENT_TIMESTAMP
 
 Article

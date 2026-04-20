@@ -26,3 +26,11 @@ spec = withApp $ do
             get ProfileR
             let (Entity _ user) = userEntity
             htmlAnyContain ".username" . unpack $ userIdent user
+
+        it "shows display name and bio when present" $ do
+            userEntity <- createUserWithProfile "baz" (Just "Bazzi") (Just "Writes about Haskell.")
+            authenticateAs userEntity
+
+            get ProfileR
+            htmlAnyContain ".username" "Bazzi"
+            htmlAnyContain ".well" "Writes about Haskell."

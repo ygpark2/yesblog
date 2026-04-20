@@ -163,13 +163,31 @@ instance Yesod App where
     isAuthorized (AuthR _) _ = return Authorized
     isAuthorized CommentR _ = return Authorized
     isAuthorized HomeR _ = return Authorized
+    isAuthorized ArchiveR _ = return Authorized
+    isAuthorized (PermalinkR _) _ = return Authorized
+    isAuthorized BlogViewR _ = return Authorized
+    isAuthorized (TagR _) _ = return Authorized
+    isAuthorized BlogFeedR _ = return Authorized
+    isAuthorized AboutR _ = return Authorized
+    isAuthorized SearchR _ = return Authorized
     isAuthorized FaviconR _ = return Authorized
     isAuthorized RobotsR _ = return Authorized
     isAuthorized (StaticR _) _ = return Authorized
 
-    -- the profile route requires that the user is authenticated, so we
-    -- delegate to that function
     isAuthorized ProfileR _ = isAuthenticated
+    isAuthorized UserSettingR _ = isAuthenticated
+    isAuthorized LangR _ = isAuthenticated
+    isAuthorized AdminR _ = isAdminUser
+    isAuthorized NewBlogR _ = isAdminUser
+    isAuthorized (ArticleR _) _ = isAdminUser
+    isAuthorized (ArticleEditR _) _ = isAdminUser
+    isAuthorized (ArticleDeleteR _) _ = isAdminUser
+    isAuthorized (CommentDeleteR _) _ = isAdminUser
+    isAuthorized (UserDeleteR _) _ = isAdminUser
+    isAuthorized PreviewR _ = isAdminUser
+    isAuthorized ImagesR _ = isAdminUser
+    isAuthorized (ImageR _) _ = isAdminUser
+    isAuthorized (ImageUpdateR _) _ = isAdminUser
 
     -- This function creates static content files in the static folder
     -- and names them based on a hash of their content. This allows
@@ -254,6 +272,9 @@ instance YesodAuth App where
             Nothing -> Authenticated <$> insert User
                 { userIdent = credsIdent creds
                 , userPassword = Nothing
+                , userDisplayName = Nothing
+                , userBio = Nothing
+                , userIsAdmin = False
                 }
 
     -- You can add other plugins like Google Email, email or OAuth here
@@ -269,6 +290,15 @@ isAuthenticated = do
     return $ case muid of
         Nothing -> Unauthorized "You must login to access this page"
         Just _ -> Authorized
+
+isAdminUser :: Handler AuthResult
+isAdminUser = do
+    muser <- maybeAuth
+    return $ case muser of
+        Nothing -> Unauthorized "You must login to access this page"
+        Just (Entity _ user)
+            | userIsAdmin user -> Authorized
+            | otherwise -> Unauthorized "Admin access required"
 
 instance YesodAuthPersist App
 

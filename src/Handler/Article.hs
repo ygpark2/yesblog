@@ -5,10 +5,8 @@ module Handler.Article where
 import Import
 import Helper.Form
 import Helper.Sidebar
-import Data.Time
-import Data.Time.Format (defaultTimeLocale, formatTime)
 import qualified Data.List as L
-import Yesod.Auth
+import qualified Data.Text as T
 
 getPermalinkR :: Text -> Handler Html
 getPermalinkR slug = do
@@ -49,9 +47,19 @@ postPermalinkR slug = do
 
 getArchiveR :: Handler Html
 getArchiveR = do
-  now <- liftIO $ getCurrentTime
   archives <- runDB $ selectList [ArticleDraft !=. True] [Desc ArticleCreatedAt]
+  let archiveGroups =
+        mapMaybe toArchiveGroup $ L.groupBy sameMonth archives
+      archiveCount = Prelude.length archives
   defaultLayout $ do
     let formatDate = formatTime defaultTimeLocale "%Y-%m-%d"
     setTitle "Archive"
     $(widgetFile "archive")
+  where
+    sameMonth (Entity _ left) (Entity _ right) =
+      archiveMonthLabel left == archiveMonthLabel right
+    toArchiveGroup [] = Nothing
+    toArchiveGroup groupedArticles@(Entity _ article : _) =
+      Just (archiveMonthLabel article, groupedArticles)
+    archiveMonthLabel article =
+      T.pack $ formatTime defaultTimeLocale "%Y-%m" (articleCreatedAt article)

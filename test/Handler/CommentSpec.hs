@@ -24,8 +24,11 @@ spec = withApp $ do
 
             statusIs 200
 
-            [Entity _id comment] <- runDB $ selectList [CommentMessage ==. message] []
-            assertEq "Should have " comment (Comment message Nothing)
+            comments <- runDB $ selectList [HomeCommentContent ==. message] []
+            let [Entity _id comment] = comments
+            assertEq "comment content" (homeCommentContent comment) message
+            assertEq "comment author" (homeCommentName comment) ("Anonymous" :: Text)
+            bodyContains "\"message\":\"My message\""
 
     describe "invalid requests" $ do
         it "400s when the JSON body is invalid" $ do
@@ -41,3 +44,15 @@ spec = withApp $ do
 
             statusIs 400
 
+        it "400s when the message is blank" $ do
+            get HomeR
+
+            let body = object [ "message" .= ("   " :: Text) ]
+
+            request $ do
+                setMethod "POST"
+                setUrl CommentR
+                setRequestBody $ encode body
+                addRequestHeader ("Content-Type", "application/json")
+
+            statusIs 400

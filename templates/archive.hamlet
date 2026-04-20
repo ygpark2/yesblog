@@ -1,18 +1,24 @@
 <div .page-header>
   <h1>Archive
+  <p>#{archiveCount} published posts
 
-<div .post-listing>
-  <table .table .table-bordered .table-condensed>
-    <thead>
-      <tr>
-        <th>Title
-        <th>Posted
+$if Prelude.null archives
+  <p>No published posts yet.
+$else
+  <div .post-listing>
+    $forall (monthLabel, group) <- archiveGroups
+      <h2>#{monthLabel}
+      <table .table .table-bordered .table-condensed>
+        <thead>
+          <tr>
+            <th>Title
+            <th>Posted
 
-    <tbody .link>
-      $forall Entity _ archive <- archives
-        <tr>
-          <td>
-            <a href="@{PermalinkR $ articleSlug archive}">
-              #{articleTitle archive}
+        <tbody .link>
+          $forall Entity _ archive <- group
+            <tr>
+              <td>
+                <a href="@{PermalinkR $ articleSlug archive}">
+                  #{articleTitle archive}
 
-          <td>#{formatDate $ articleCreatedAt archive}
+              <td>#{formatDate $ articleCreatedAt archive}

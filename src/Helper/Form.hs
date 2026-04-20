@@ -3,11 +3,7 @@
 module Helper.Form where
 
 import Import
--- to use Html into forms
-import Data.Time
 import Yesod.Markdown
-import Yesod.Auth
-import Data.Maybe
 import qualified Data.Text as T
 
 entryForm :: Form (Article, [Text])
@@ -47,11 +43,11 @@ commentForm articleId extra = do
         Just entity -> userIdent $ entityVal entity
         Nothing -> "Anonymous"
   renderDivs (commentAForm mname) extra
-  where commentAForm mname = Comment
-          <$> areq textField fsName (Just mname)
+  where commentAForm authorName = Comment
+          <$> areq textField commentNameField (Just authorName)
           <*> (unTextarea <$> areq textareaField fsContent Nothing)
           <*> pure articleId
           <*> lift (liftIO getCurrentTime)
             where
-              fsName    = (fieldSettingsLabel ("Name" :: Text))    { fsAttrs = [("class", "col-md-12")] }
-              fsContent = (fieldSettingsLabel ("Comment" :: Text)) { fsAttrs = [("class", "col-md-12")] }
+              commentNameField = (fieldSettingsLabel ("Name" :: Text))    { fsAttrs = [("class", "col-md-12")] }
+              fsContent        = (fieldSettingsLabel ("Comment" :: Text)) { fsAttrs = [("class", "col-md-12")] }

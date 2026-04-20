@@ -2,3 +2,12 @@
 <form method=post action=@{UserSettingR} enctype=#{enctype}>
   ^{widget}
   <button type="submit">Save</button>
+
+<hr>
+
+<h2>Language</h2>
+<form method=post action=@{LangR}>
+  <div .form-group>
+    <label for=lang>Language code
+    <input #lang .form-control type=text name=lang placeholder="en or ko">
+  <button type="submit">Update language</button>

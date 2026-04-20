@@ -2,13 +2,28 @@
   <h1>Search</h1>
 
 <form method=get action=@{SearchR}>
-  <input type="text" name="q" value="#{searchString}">
-  <button type="submit">Search</button>
+  <input .form-control type="text" name="q" value="#{searchString}" placeholder="Search titles and content">
+  <button .btn .btn-primary type="submit">Search</button>
 
-$if not hasArticles
+<p .search-summary>#{searchSummary}
+
+$if searchString == ""
+  <p>Try a keyword like a title, tag term, or phrase from the post body.
+$elseif not hasArticles
   <p>No results.
 $else
-  <ul>
+  <ul .list-unstyled>
     $forall Entity _ article <- articles
-      <li>
-        <a href=@{PermalinkR $ articleSlug article}>#{articleTitle article}
+      <li .well>
+        <h3>
+          <a href=@{PermalinkR $ articleSlug article}>#{articleTitle article}
+        ^{articleInfo article}
+  $if isJust prevPageUrl || isJust nextPageUrl
+    <nav>
+      <ul .pager>
+        $maybe url <- prevPageUrl
+          <li .previous>
+            <a href=#{url}>Previous results
+        $maybe url <- nextPageUrl
+          <li .next>
+            <a href=#{url}>Next results

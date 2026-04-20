@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Helper.ImageForm where
 import Data.Time (UTCTime, getCurrentTime)
+import Data.Maybe (fromMaybe)
 import Import
 
 uploadDirectory :: FilePath
@@ -18,3 +19,9 @@ uploadForm = renderDivs $ (,,)
         where
           fsFile      = (fieldSettingsLabel ("File upload" :: Text)) { fsAttrs = [("class", "col-md-12")]}
           fsFileDescr = (fieldSettingsLabel ("Description" :: Text)) { fsAttrs = [("class", "col-md-12")]}
+
+imageDescriptionForm :: Maybe Textarea -> Form Textarea
+imageDescriptionForm description = renderDivs $
+    areq textareaField fsImageDescr (Just (fromMaybe (Textarea "") description))
+  where
+    fsImageDescr = (fieldSettingsLabel ("Image description" :: Text)) { fsAttrs = [("class", "col-md-12")] }

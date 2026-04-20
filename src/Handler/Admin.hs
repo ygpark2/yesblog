@@ -5,37 +5,50 @@ module Handler.Admin where
 
 
 import Import
-import Yesod.Auth
-import Data.Time
-import Data.Time.Format (defaultTimeLocale, formatTime)
 import qualified Control.Monad as CM
+import qualified Data.Text as T
+import System.FilePath (takeExtension)
 import Helper.Form
-import Helper.MakeBrief
-import Helper.Sidebar
-import Handler.Image
+
+loadRecentImages :: Handler [Entity Image]
+loadRecentImages = runDB $ selectList [ImageFilename !=. ""] [Desc ImageDate, LimitTo 12]
+
+imagePublicPath :: String -> Text
+imagePublicPath filename = T.pack ("/static/files/" <> filename)
+
+editorImageSnippet :: String -> Text
+editorImageSnippet filename = T.concat ["![](\"", imagePublicPath filename, "\")"]
+
+previewableImage :: String -> Bool
+previewableImage filename =
+  takeExtension filename `Prelude.elem` [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"]
 
 getAdminR :: Handler Html
 getAdminR = do
-  -- Get the list of articles inside the database
+  _ <- requireAdmin
   let page = 10
-  Entity _ user <- requireAuth
+  Entity currentUserId user <- requireAuth
   let username = userIdent user
-  (articles, users, comments) <- runDB $ do
+  (articles, users, comments, images) <- runDB $ do
      articles <- selectList [] [Desc ArticleCreatedAt, LimitTo page]
-     users <- selectList [] [Desc UserIdent]
-     comments <- selectList [] [Desc CommentPosted]
-     return (articles, users, comments)
-  -- We'll need the two "objects": articleWidget and enctype
-  -- to construct the form (see templates/articles.hamlet).
+     users <- selectList [] [Asc UserIdent, LimitTo page]
+     comments <- selectList [] [Desc CommentPosted, LimitTo page]
+     images <- selectList [ImageFilename !=. ""] [Desc ImageDate, LimitTo page]
+     return (articles, users, comments, images)
+  let articleCount = Prelude.length articles
+      userCount = Prelude.length users
+      commentCount = Prelude.length comments
+      imageCount = Prelude.length images
   (articleWidget, enctype) <- generateFormPost entryForm
-  maid <- maybeAuthId
+  mmsg <- getMessage
   defaultLayout $ do
     setTitle "Admin"
     $(widgetFile "admin/index")
 
 postAdminR :: Handler Html
 postAdminR = do
-  ((res,articleWidget),enctype) <- runFormPost entryForm
+  _ <- requireAdmin
+  ((res,_),_) <- runFormPost entryForm
   case res of
     FormSuccess (article, tags) -> do
       articleId <- runDB $ do
@@ -54,25 +67,16 @@ postAdminR = do
 
 getNewBlogR :: Handler Html
 getNewBlogR = do
-  Entity _ user <- requireAuth
-  let username = userIdent user
-  -- Get the list of articles inside the database
-  (articles, images) <- runDB $ do
-    articles <- selectList [][Desc ArticleCreatedAt]
-    images   <- selectList [ImageFilename !=. ""] [Desc ImageDate]
-    return (articles, images)
-  now <- liftIO $ getCurrentTime
-  -- We'll need the two "objects": articleWidget and enctype
-  -- to construct the form (see templates/articles.hamlet).
+  _ <- requireAdmin
+  images <- loadRecentImages
   (articleWidget, enctype) <- generateFormPost entryForm
-  maid <- maybeAuthId
   defaultLayout $ do
     setTitle "Admin"
     $(widgetFile "admin/new")
 
 getArticleR :: ArticleId -> Handler Html
 getArticleR articleId = do
-  now <- liftIO $ getCurrentTime
+  _ <- requireAdmin
   (comments, article, author, tags) <- runDB $ do
     comments <- Prelude.map entityVal <$>
                 selectList [CommentArticle ==. articleId] [Asc CommentPosted]
@@ -92,6 +96,7 @@ getArticleR articleId = do
 
 postArticleR :: ArticleId -> Handler Html
 postArticleR articleId = do
+  _ <- requireAdmin
   ((res,_), _) <- runFormPost $ commentForm articleId
   case res of
     FormSuccess comment -> do
@@ -104,9 +109,8 @@ postArticleR articleId = do
 
 postNewBlogR :: Handler Html
 postNewBlogR = do
-  (Entity _ user) <- requireAuth
-  let username = userIdent user
-  ((res,articleWidget),enctype) <- runFormPost entryForm
+  _ <- requireAdmin
+  ((res,_),_) <- runFormPost entryForm
   case res of
     FormSuccess (article, tags) -> do
       articleId <- runDB $ do
@@ -125,14 +129,13 @@ postNewBlogR = do
 
 getArticleEditR :: ArticleId -> Handler Html
 getArticleEditR articleId = do
-  (Entity _ user) <- requireAuth
+  _ <- requireAdmin
   (post, oldTags) <- runDB $ do
     post <- get404 articleId
     oldTags <- Prelude.map (\(Entity _ t) -> tagName t)
                <$> (selectList [TagArticle ==. articleId] [])
     return (post, oldTags)
-  let username = userIdent user
-  maid <- maybeAuthId
+  images <- loadRecentImages
   (postWidget, enctype) <- generateFormPost $ (postForm (Just post) (Just oldTags))
   defaultLayout $ do
     setTitle "Edit article"
@@ -140,12 +143,10 @@ getArticleEditR articleId = do
 
 postPreviewR :: Handler Html
 postPreviewR = do
-  (Entity _ user) <- requireAuth
-  let username = userIdent user
-  ((res,previewWidget),enctype) <- runFormPost entryForm
+  _ <- requireAdmin
+  ((res,previewWidget),_) <- runFormPost entryForm
   case res of
-    FormSuccess (article, tags) -> do
-      now <- liftIO $ getCurrentTime
+    FormSuccess _ -> do
       defaultLayout $ do
         $(widgetFile "admin/preview")
     _ -> do
@@ -154,9 +155,7 @@ postPreviewR = do
 
 postArticleEditR :: ArticleId -> Handler Html
 postArticleEditR articleId = do
-  maid <- maybeAuthId
-  (Entity _ user) <- requireAuth
-  let username = userIdent user
+  _ <- requireAdmin
   ((res, postWidget), enctype) <- runFormPost entryForm
   case res of
        FormSuccess (post, tags) -> do
@@ -173,24 +172,23 @@ postArticleEditR articleId = do
                                           <a href=@{ArticleEditR articleId}>Back Edit</a>|]
          setMessage $ toHtml $ html renderer
          redirect $ ArticleR articleId
-       _ -> defaultLayout $ do
-         setTitle "Post failed"
-         $(widgetFile "admin/edit")
+       _ -> do
+         images <- loadRecentImages
+         defaultLayout $ do
+           setTitle "Post failed"
+           $(widgetFile "admin/edit")
 
 getArticleDeleteR :: ArticleId -> Handler Html
 getArticleDeleteR articleId = do
-  (article, oldTags) <- runDB $ do
-    _article <- get404 articleId
-    oldTags <- Prelude.map (\(Entity _ t) -> tagName t)
-                 <$> (selectList [TagArticle ==. articleId] [])
-    return (_article, oldTags)
-  (postWidget, enctype) <- generateFormPost $ (postForm (Just article) (Just oldTags))
+  _ <- requireAdmin
+  _ <- runDB $ get404 articleId
   defaultLayout $ do
     setTitle "Delete article"
     $(widgetFile "admin/delete")
 
 postArticleDeleteR :: ArticleId -> Handler Html
 postArticleDeleteR articleId = do
+  _ <- requireAdmin
   article <- runDB $ do
     _post <- get404 articleId
     delete articleId
@@ -205,6 +203,7 @@ postArticleDeleteR articleId = do
 
 getCommentDeleteR :: CommentId -> Handler Html
 getCommentDeleteR commentId = do
+  _ <- requireAdmin
   comment <- runDB $ do
     _post <- get404 commentId
     delete commentId
@@ -217,6 +216,7 @@ getCommentDeleteR commentId = do
 
 getUserDeleteR :: UserId -> Handler Html
 getUserDeleteR usrId = do
+  _ <- requireAdmin
   (Entity userId _) <- requireAuth
   if usrId /= userId
     then do
@@ -232,3 +232,10 @@ getUserDeleteR usrId = do
    else do
      setMessage "You cannot delete yourself."
      redirect $ AdminR
+
+requireAdmin :: Handler (Entity User)
+requireAdmin = do
+  entity@(Entity _ user) <- requireAuth
+  if userIsAdmin user
+    then pure entity
+    else permissionDenied "Admin access required"

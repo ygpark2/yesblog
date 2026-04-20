@@ -9,9 +9,15 @@ userForm html = do
   Entity _ user <- lift requireAuth
   let ident      = userIdent user
       password   = userPassword user
+      displayName = userDisplayName user
+      bio         = userBio user
+      isAdmin    = userIsAdmin user
   renderDivs
     (User
       <$> areq textField (fieldSettingsLabel ("Username" :: Text)) (Just ident)
       <*> pure password
+      <*> aopt textField (fieldSettingsLabel ("Display name" :: Text)) (Just displayName)
+      <*> aopt textareaField (fieldSettingsLabel ("Bio" :: Text)) (Just bio)
+      <*> pure isAdmin
     )
     html

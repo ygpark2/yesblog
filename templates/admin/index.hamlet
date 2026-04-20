@@ -1,7 +1,109 @@
-<h1>Admin</h1>
+<h1>Admin dashboard</h1>
+$maybe msg <- mmsg
+  <p>#{msg}
+
 <p>Logged in as #{username}
 
-<h2>New article</h2>
+<div .row>
+  <div .col-md-3>
+    <div .panel .panel-default>
+      <div .panel-heading>Recent posts
+      <div .panel-body>
+        <strong>#{articleCount}
+        <div>
+          <a href=@{NewBlogR}>Write a new article
+  <div .col-md-3>
+    <div .panel .panel-default>
+      <div .panel-heading>Recent comments
+      <div .panel-body>
+        <strong>#{commentCount}
+        <div>
+          <a href=@{BlogViewR}>Open blog list
+  <div .col-md-3>
+    <div .panel .panel-default>
+      <div .panel-heading>Recent users
+      <div .panel-body>
+        <strong>#{userCount}
+        <div>
+          <a href=@{UserSettingR}>Open your profile
+  <div .col-md-3>
+    <div .panel .panel-default>
+      <div .panel-heading>Recent images
+      <div .panel-body>
+        <strong>#{imageCount}
+        <div>
+          <a href=@{ImagesR}>Manage images
+
+<h2>Quick publish</h2>
 <form method=post action=@{AdminR} enctype=#{enctype}>
   ^{articleWidget}
-  <button type="submit">Publish</button>
+  <button .btn .btn-primary type="submit">Publish</button>
+
+<div .row>
+  <div .col-md-6>
+    <h2>Latest articles</h2>
+    $if Prelude.null articles
+      <p>No articles yet.
+    $else
+      $forall Entity articleId article <- articles
+        <div .panel .panel-default>
+          <div .panel-body>
+            <strong>
+              <a href=@{ArticleR articleId}>#{articleTitle article}
+            <p>Slug: #{articleSlug article}
+            <p>
+              Status:
+              $if articleDraft article
+                Draft
+              $else
+                Published
+            <a .btn .btn-default href=@{ArticleEditR articleId}>Edit
+            <a .btn .btn-danger href=@{ArticleDeleteR articleId}>Delete
+
+  <div .col-md-6>
+    <h2>Latest comments</h2>
+    $if Prelude.null comments
+      <p>No comments yet.
+    $else
+      $forall Entity commentId comment <- comments
+        <div .panel .panel-default>
+          <div .panel-body>
+            <strong>#{commentName comment}
+            <p>#{commentContent comment}
+            <a .btn .btn-danger href=@{CommentDeleteR commentId}>Delete
+
+<div .row>
+  <div .col-md-6>
+    <h2>Recent users</h2>
+    $if Prelude.null users
+      <p>No users yet.
+    $else
+      $forall Entity userId listedUser <- users
+        <div .panel .panel-default>
+          <div .panel-body>
+            <strong>#{userIdent listedUser}
+            $maybe displayName <- userDisplayName listedUser
+              <p>#{displayName}
+            <p>
+              $if userIsAdmin listedUser
+                Admin
+              $else
+                Member
+            $if userId /= currentUserId
+              <a .btn .btn-danger href=@{UserDeleteR userId}>Delete user
+
+  <div .col-md-6>
+    <h2>Recent images</h2>
+    $if Prelude.null images
+      <p>No images yet.
+    $else
+      $forall Entity imageId image <- images
+        <div .panel .panel-default>
+          <div .panel-body>
+            <strong>#{imageFilename image}
+            $maybe description <- imageDescription image
+              <p>#{unTextarea description}
+            <a .btn .btn-default href=@{ImagesR}>Open library
+            <form method=post action=@{ImageR imageId}>
+              <input type="hidden" name="_method" value="DELETE">
+              <button .btn .btn-danger type="submit">Delete

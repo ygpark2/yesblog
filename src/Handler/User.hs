@@ -21,6 +21,7 @@ postUserSettingR = do
   case result of
     FormSuccess newUser -> do
          runDB $ replace key newUser
+         setMessage "Settings updated."
          redirect UserSettingR
     _ -> permissionDenied "Not authorized"
 

@@ -6,21 +6,24 @@ import Import
 import System.FilePath
 import qualified Data.Text as T
 import System.Directory (removeFile, doesFileExist)
-import Data.Time
 import Helper.ImageForm
 
 getImagesR :: Handler Html
 getImagesR = do
-    ((_, widget), enctype) <- runFormPost uploadForm
+    _ <- requireAdmin
+    ((_, uploadWidget), uploadEnctype) <- runFormPost uploadForm
     images <- runDB $ selectList [ImageFilename !=. ""] [Desc ImageDate]
+    imageCards <- forM images $ \(Entity imageId image) -> do
+        (descriptionWidget, descriptionEnctype) <- generateFormPost $ imageDescriptionForm (imageDescription image)
+        pure (imageId, image, descriptionWidget, descriptionEnctype)
     mmsg <- getMessage
-    now <- liftIO $ getCurrentTime
     let hasImages = not (Prelude.null images)
     defaultLayout $ do
       $(widgetFile "admin/image")
 
 postImagesR :: Handler Html
 postImagesR = do
+    _ <- requireAdmin
     ((result, _), _) <- runFormPost uploadForm
     case result of
         FormSuccess (file, info, date) -> do
@@ -42,12 +45,13 @@ postImagesR = do
 
 deleteImageR :: ImageId -> Handler ()
 deleteImageR imageId = do
+    _ <- requireAdmin
     image <- runDB $ get404 imageId
     let filename = imageFilename image
-        path = imageFilePath filename
-    liftIO $ removeFile path
+        filePath = imageFilePath filename
+    liftIO $ removeFile filePath
     -- only delete from database if file has been removed from server
-    stillExists <- liftIO $ doesFileExist path
+    stillExists <- liftIO $ doesFileExist filePath
 
     case (not stillExists) of
         False -> do
@@ -58,11 +62,25 @@ deleteImageR imageId = do
             setMessage "File deleted."
             redirect ImagesR
 
+postImageUpdateR :: ImageId -> Handler Html
+postImageUpdateR imageId = do
+    _ <- requireAdmin
+    image <- runDB $ get404 imageId
+    ((result, _), _) <- runFormPost $ imageDescriptionForm (imageDescription image)
+    case result of
+        FormSuccess description -> do
+            runDB $ update imageId [ImageDescription =. normalizeDescription description]
+            setMessage "Image description updated."
+            redirect ImagesR
+        _ -> do
+            setMessage "Could not update image description."
+            redirect ImagesR
+
 writeToServer :: FileInfo -> Handler FilePath
 writeToServer file = do
     let filename = T.unpack $ fileName file
-        path = imageFilePath filename
-    liftIO $ fileMove file path
+        filePath = imageFilePath filename
+    liftIO $ fileMove file filePath
     return filename
 
 imageFilePath :: String -> FilePath
@@ -70,3 +88,23 @@ imageFilePath f = uploadDirectory </> uploadSubDirectory </> f
 
 imageFilePath' :: String -> FilePath
 imageFilePath' f = "/" </> uploadDirectory </> uploadSubDirectory </> f
+
+markdownImageSnippet :: String -> Text
+markdownImageSnippet filename =
+    T.concat ["![](\"", T.pack (imageFilePath' filename), "\")"]
+
+normalizeDescription :: Textarea -> Maybe Textarea
+normalizeDescription description
+    | T.strip (unTextarea description) == "" = Nothing
+    | otherwise = Just description
+
+isPreviewableImage :: String -> Bool
+isPreviewableImage filename =
+    takeExtension filename `Prelude.elem` [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"]
+
+requireAdmin :: Handler (Entity User)
+requireAdmin = do
+    entity@(Entity _ user) <- requireAuth
+    if userIsAdmin user
+        then pure entity
+        else permissionDenied "Admin access required"

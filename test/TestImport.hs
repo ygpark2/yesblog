@@ -9,7 +9,7 @@ module TestImport
 import Application           (makeFoundation, makeLogWare)
 import ClassyPrelude         as X hiding (delete, deleteBy, Handler)
 import Database.Persist      as X hiding (get)
-import Database.Persist.Sql  (SqlPersistM, runSqlPersistMPool, rawExecute, rawSql, unSingle, connEscapeName)
+import Database.Persist.Sql  (SqlPersistM, runSqlPersistMPool, rawExecute, rawSql, unSingle)
 import Foundation            as X
 import Model                 as X
 import Test.Hspec            as X
@@ -24,6 +24,8 @@ import Control.Monad.Logger                 (runLoggingT)
 import Lens.Micro                           (set)
 import Settings (appDatabaseConf)
 import Yesod.Core (messageLoggerSource)
+import Yesod.Form.Fields (Textarea (..))
+import Yesod.Markdown (Markdown (..))
 
 runDB :: SqlPersistM a -> YesodExample App a
 runDB query = do
@@ -68,8 +70,7 @@ wipeDB app = do
 
     flip runSqlPersistMPool pool $ do
         tables <- getTables
-        sqlBackend <- ask
-        let queries = map (\t -> "DELETE FROM " ++ (connEscapeName sqlBackend $ DBName t)) tables
+        let queries = map (\t -> "DELETE FROM \"" ++ t ++ "\"") tables
         forM_ queries (\q -> rawExecute q [])
 
 getTables :: DB [Text]
@@ -91,13 +92,51 @@ authenticateAs (Entity _ u) = do
 -- checking is switched off in wipeDB for those database backends which need it.
 createUser :: Text -> YesodExample App (Entity User)
 createUser ident = runDB $ do
-    user <- insertEntity User
+    insertEntity User
         { userIdent = ident
         , userPassword = Nothing
+        , userDisplayName = Nothing
+        , userBio = Nothing
+        , userIsAdmin = False
         }
-    _ <- insert Email
-        { emailEmail = ident
-        , emailUserId = Just $ entityKey user
-        , emailVerkey = Nothing
+
+createAdmin :: Text -> YesodExample App (Entity User)
+createAdmin ident = runDB $ do
+    insertEntity User
+        { userIdent = ident
+        , userPassword = Nothing
+        , userDisplayName = Nothing
+        , userBio = Nothing
+        , userIsAdmin = True
         }
-    return user
+
+createUserWithProfile :: Text -> Maybe Text -> Maybe Text -> YesodExample App (Entity User)
+createUserWithProfile ident displayName bio = runDB $ do
+    insertEntity User
+        { userIdent = ident
+        , userPassword = Nothing
+        , userDisplayName = displayName
+        , userBio = Textarea <$> bio
+        , userIsAdmin = False
+        }
+
+createArticle :: UserId -> Text -> Text -> YesodExample App (Entity Article)
+createArticle authorId title slug = runDB $ do
+    now <- liftIO getCurrentTime
+    insertEntity Article
+        { articleAuthor = authorId
+        , articleTitle = title
+        , articleContent = Markdown ("content for " <> title)
+        , articleSlug = slug
+        , articleDraft = False
+        , articleCreatedAt = now
+        }
+
+createImage :: String -> Maybe Text -> YesodExample App (Entity Image)
+createImage filename description = runDB $ do
+    now <- liftIO getCurrentTime
+    insertEntity Image
+        { imageFilename = filename
+        , imageDescription = Textarea <$> description
+        , imageDate = now
+        }

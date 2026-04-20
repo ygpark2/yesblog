@@ -17,6 +17,7 @@
 /search                      SearchR        GET
 /file                        ImagesR        GET POST
 /file/admin/#ImageId         ImageR                  DELETE
+/file/admin/#ImageId/update  ImageUpdateR    POST
 /preview                     PreviewR           POST
 /admin/manage                AdminR         GET POST
 /admin/new                   NewBlogR       GET POST

@@ -4,11 +4,6 @@
 module Handler.Blog where
 
 import Import
-import Data.Time
-import Data.Maybe
-import Data.List (head, sortBy)
-import Data.Function
-import Control.Monad
 import qualified Data.Text as T (concat, append)
 import Text.Shakespeare.Text (st)
 import Database.Persist.Sql
@@ -27,6 +22,7 @@ getBlogFeedR = do
           , feedEntryUpdated = articleCreatedAt article
           , feedEntryTitle = articleTitle article
           , feedEntryContent = toHtml $ makeBrief 500 $ markdownToText $ articleContent article
+          , feedEntryCategories = []
           , feedEntryEnclosure = Nothing
           }
         ) articles
@@ -48,42 +44,94 @@ getBlogFeedR = do
 
 getBlogViewR :: Handler Html
 getBlogViewR = do
-  -- Get the list of articles inside the database
-  let page = 10
-  (articles, articleArchives) <- runDB $ do
-    articles <- selectList [ArticleDraft !=. True] [Desc ArticleCreatedAt, LimitTo page]
-    articleArchives <- selectList [ArticleDraft !=. True] [Desc ArticleCreatedAt, LimitTo 10]
-    return (articles, articleArchives)
+  currentPage <- getPageParam
+  let pageSize = 10
+      offset = pageOffset currentPage pageSize
+  articles <- runDB $ selectList [ArticleDraft !=. True] [Desc ArticleCreatedAt, OffsetBy offset, LimitTo pageSize]
+  totalArticles <- runDB $ count [ArticleDraft !=. True]
   title <- getBlogTitle
-  -- We'll need the two "objects": articleWidget and enctype
-  -- to construct the form (see templates/articles.hamlet).
+  renderer <- getUrlRenderParams
   defaultLayout $ do
     let hasArticles = not (Prelude.null articles)
+    let prevPageUrl =
+          if currentPage > 1
+          then Just $ renderer BlogViewR [("page", tshow (currentPage - 1))]
+          else Nothing
+    let nextPageUrl =
+          if totalArticles > offset + Prelude.length articles
+          then Just $ renderer BlogViewR [("page", tshow (currentPage + 1))]
+          else Nothing
     setTitle $ toHtml title
     $(widgetFile "view")
 
 getSearchR :: Handler Html
 getSearchR = do
     searchString <- runInputGet $ fromMaybe ("" :: Text) <$> iopt (searchField True) ("q" :: Text)
-    articles <-
+    currentPage <- getPageParam
+    let pageSize = 10
+        offset = pageOffset currentPage pageSize
+    (articles, totalArticles) <-
        if searchString /= ""
-       then selectArticles searchString
-       else return (mempty)
+       then selectArticles searchString offset pageSize
+       else return (mempty, 0)
 
-    now <- liftIO $ getCurrentTime
+    renderer <- getUrlRenderParams
     defaultLayout $ do
       let hasArticles = not (Prelude.null articles)
+      let showingFrom =
+            if hasArticles
+            then offset + 1
+            else 0
+      let showingTo = offset + Prelude.length articles
+      let searchSummary =
+            if searchString == ""
+            then "Enter a title or body keyword to search published articles."
+            else if totalArticles == 0
+              then T.concat ["No published articles matched \"", searchString, "\"."]
+              else T.concat
+                [ "Showing "
+                , tshow showingFrom
+                , "-"
+                , tshow showingTo
+                , " of "
+                , tshow totalArticles
+                , " results for \""
+                , searchString
+                , "\"."
+                ]
+      let prevPageUrl =
+            if currentPage > 1 && searchString /= ""
+            then Just $ renderer SearchR [("q", searchString), ("page", tshow (currentPage - 1))]
+            else Nothing
+      let nextPageUrl =
+            if totalArticles > offset + Prelude.length articles
+            then Just $ renderer SearchR [("q", searchString), ("page", tshow (currentPage + 1))]
+            else Nothing
       $(widgetFile "search")
   where
-    selectArticles :: Text -> Handler [Entity Article]
-    selectArticles t =
-      runDB $ rawSql [st| SELECT ?? FROM article
-                          WHERE draft = ?
-                          AND (content LIKE ? OR title LIKE ?)
-                          ORDER BY created_at DESC|]
-                     [ toPersistValue False
-                     , toPersistValue $ T.concat ["%", t, "%"]
-                     , toPersistValue $ T.concat ["%", t, "%"]]
+    selectArticles :: Text -> Int -> Int -> Handler ([Entity Article], Int)
+    selectArticles t offset limit =
+      runDB $ do
+        let keyword = T.concat ["%", t, "%"]
+        articles <- rawSql [st| SELECT ?? FROM article
+                                WHERE draft = ?
+                                AND (content LIKE ? OR title LIKE ?)
+                                ORDER BY created_at DESC
+                                LIMIT ? OFFSET ?|]
+                           [ toPersistValue False
+                           , toPersistValue keyword
+                           , toPersistValue keyword
+                           , toPersistValue limit
+                           , toPersistValue offset
+                           ]
+        total <- rawSql [st| SELECT COUNT(*) FROM article
+                             WHERE draft = ?
+                             AND (content LIKE ? OR title LIKE ?)|]
+                        [ toPersistValue False
+                        , toPersistValue keyword
+                        , toPersistValue keyword
+                        ]
+        pure (articles, maybe 0 unSingle (listToMaybe total))
 
 getTagR :: Text -> Handler Html
 getTagR tag = do
@@ -92,8 +140,17 @@ getTagR tag = do
   when (Prelude.null articles) notFound
   defaultLayout $ do
     let hasArticles = not (Prelude.null articles)
+    let articleCount = Prelude.length articles
     setTitle "Tagged articles"
     $(widgetFile "inline/tag")
 
 getBlogTitle :: Handler Text
 getBlogTitle = pure "YesBlog"
+
+getPageParam :: Handler Int
+getPageParam = do
+  page <- runInputGet $ fromMaybe 1 <$> iopt intField ("page" :: Text)
+  pure $ max 1 page
+
+pageOffset :: Int -> Int -> Int
+pageOffset page pageSize = (page - 1) * pageSize
