@@ -46,6 +46,7 @@ library:
     - wai-extra >=3.1.18 && <3.2
     - yaml >=0.11.11 && <0.12
     - http-conduit >=2.3.9 && <2.4
+    - http-types
     - yesod-auth-oauth2 >=0.7.4.0 && <0.8
     - yesod-newsfeed
     - uri-bytestring >=0.4.0.1 && <0.5
@@ -72,6 +73,24 @@ library:
     - case-insensitive
     - http-client-tls
     - wai
+  exposed-modules:
+    - Application
+    - Foundation
+    - Handler.Api
+    - Handler.Api.Admin
+    - Handler.Api.Editor
+    - Handler.Api.Legacy
+    - Handler.Api.Public
+    - Handler.Api.Shared
+    - Helper.Form
+    - Helper.ImageForm
+    - Helper.MakeBrief
+    - Helper.UserForm
+    - Import
+    - Import.NoFoundation
+    - Model
+    - Settings
+    - Settings.StaticFiles
 
 executables:
   yesblog:
@@ -100,6 +119,7 @@ tests:
       - yesod-core
       - yesod
       - yesod-auth
+      - yesod-auth-hashdb
       - yesod-form
       - persistent
       - persistent-sqlite

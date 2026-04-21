@@ -2,33 +2,34 @@
 -- Syntax for this file here: https://www.yesodweb.com/book/routing-and-handlers
 
 /static StaticR Static appStatic
-/auth   AuthR   Auth   getAuth
 
 /favicon.ico FaviconR GET
 /robots.txt RobotsR GET
 
 /                            HomeR          GET POST
-/archive                     ArchiveR       GET
-/blog/post/#Text             PermalinkR     GET POST
-/blog                        BlogViewR      GET
-/blog/tag/#Text              TagR           GET
-/blog/feed                   BlogFeedR      GET
-/about                       AboutR         GET
-/search                      SearchR        GET
-/file                        ImagesR        GET POST
-/file/admin/#ImageId         ImageR                  DELETE
-/file/admin/#ImageId/update  ImageUpdateR    POST
-/preview                     PreviewR           POST
-/admin/manage                AdminR         GET POST
-/admin/new                   NewBlogR       GET POST
-/admin/article/#ArticleId    ArticleR       GET POST
-/admin/edit/#ArticleId       ArticleEditR   GET POST
-/admin/delete/#ArticleId     ArticleDeleteR GET POST
-/admin/commentdel/#CommentId CommentDeleteR GET
-/admin/userdel/#UserId       UserDeleteR    GET
-/setting/user                UserSettingR   GET POST
-/lang                        LangR          POST
-
-/comments CommentR POST
-
-/profile ProfileR GET
+/app/*Texts                  FrontendAppPathR GET
+/api/posts                  ApiPostsR      GET
+/api/post/#Text             ApiPostR       GET
+/api/post/#Text/comment     ApiPostCommentR POST
+/api/comment/#CommentId/update ApiCommentUpdateR POST
+/api/comment/#CommentId/delete ApiCommentDeleteR POST
+/api/user/#Text             ApiUserR       GET
+/api/auth/login             ApiAuthLoginR  POST
+/api/auth/register          ApiAuthRegisterR POST
+/api/auth/logout            ApiAuthLogoutR POST
+/api/session               ApiSessionR    GET
+/api/me                    ApiMeR         GET
+/api/me/update             ApiMeUpdateR   POST
+/api/admin/dashboard       ApiAdminDashboardR GET
+/api/admin/article/#ArticleId/delete ApiAdminArticleDeleteR POST
+/api/admin/comment/#CommentId/delete ApiAdminCommentDeleteR POST
+/api/admin/user/#UserId/delete ApiAdminUserDeleteR POST
+/api/editor/bootstrap       ApiEditorBootstrapR GET
+/api/editor/mine            ApiEditorMineR GET
+/api/editor/article/#ArticleId ApiEditorArticleR GET
+/api/editor/article/#ArticleId/delete ApiEditorDeleteR POST
+/api/editor/upload          ApiEditorUploadR POST
+/api/editor/image/#ImageId/update ApiEditorImageUpdateR POST
+/api/editor/image/#ImageId/delete ApiEditorImageDeleteR POST
+/api/editor/save            ApiEditorSaveR POST
+/api/editor/autosave        ApiEditorAutosaveR POST

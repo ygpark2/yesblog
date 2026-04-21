@@ -7,24 +7,27 @@
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Foundation where
 
 import Import.NoFoundation
 import Database.Persist.Sql (ConnectionPool, runSqlPool)
-import Text.Hamlet          (hamletFile)
+import Text.Hamlet          (hamlet)
 import Text.Jasmine         (minifym)
 import Control.Monad.Logger (LogSource)
 
 -- Used only when in "auth-dummy-login" setting is enabled.
 import Yesod.Auth.Dummy
 
-import Yesod.Auth.OpenId    (authOpenId, IdentifierType (Claimed))
+import Yesod.Auth.HashDB    (HashDBUser (..))
+import Yesod.Auth.Message   (AuthMessage (InvalidUsernamePass))
 import Yesod.Default.Util   (addStaticContentExternal)
 import Yesod.Core.Types     (Logger)
 import qualified Yesod.Core.Unsafe as Unsafe
-import qualified Data.CaseInsensitive as CI
-import qualified Data.Text.Encoding as TE
+import Data.Kind            (Type)
 
 -- | The foundation datatype for your application. This can be a good place to
 -- keep settings and values requiring initialization before your application
@@ -37,16 +40,6 @@ data App = App
     , appHttpManager :: Manager
     , appLogger      :: Logger
     }
-
-data MenuItem = MenuItem
-    { menuItemLabel :: Text
-    , menuItemRoute :: Route App
-    , menuItemAccessCallback :: Bool
-    }
-
-data MenuTypes
-    = NavbarLeft MenuItem
-    | NavbarRight MenuItem
 
 -- This is where we define all of the routes in our application. For a full
 -- explanation of the syntax, please see:
@@ -66,7 +59,7 @@ mkYesodData "App" $(parseRoutesFile "config/routes")
 type Form x = Html -> MForm (HandlerFor App) (FormResult x, Widget)
 
 -- | A convenient synonym for database access functions.
-type DB a = forall (m :: * -> *).
+type DB a = forall (m :: Type -> Type).
     (MonadIO m) => ReaderT SqlBackend m a
 
 -- Please see the documentation for the Yesod typeclass. There are a number
@@ -99,95 +92,60 @@ instance Yesod App where
 
     defaultLayout :: Widget -> Handler Html
     defaultLayout widget = do
-        master <- getYesod
-        mmsg <- getMessage
-
-        muser <- maybeAuthPair
-        mcurrentRoute <- getCurrentRoute
-
-        -- Get the breadcrumbs, as defined in the YesodBreadcrumbs instance.
-        (title, parents) <- breadcrumbs
-
-        -- Define the menu items of the header.
-        let menuItems =
-                [ NavbarLeft $ MenuItem
-                    { menuItemLabel = "Home"
-                    , menuItemRoute = HomeR
-                    , menuItemAccessCallback = True
-                    }
-                , NavbarLeft $ MenuItem
-                    { menuItemLabel = "Profile"
-                    , menuItemRoute = ProfileR
-                    , menuItemAccessCallback = isJust muser
-                    }
-                , NavbarRight $ MenuItem
-                    { menuItemLabel = "Login"
-                    , menuItemRoute = AuthR LoginR
-                    , menuItemAccessCallback = isNothing muser
-                    }
-                , NavbarRight $ MenuItem
-                    { menuItemLabel = "Logout"
-                    , menuItemRoute = AuthR LogoutR
-                    , menuItemAccessCallback = isJust muser
-                    }
-                ]
-
-        let navbarLeftMenuItems = [x | NavbarLeft x <- menuItems]
-        let navbarRightMenuItems = [x | NavbarRight x <- menuItems]
-
-        let navbarLeftFilteredMenuItems = [x | x <- navbarLeftMenuItems, menuItemAccessCallback x]
-        let navbarRightFilteredMenuItems = [x | x <- navbarRightMenuItems, menuItemAccessCallback x]
-
-        -- We break up the default layout into two components:
-        -- default-layout is the contents of the body tag, and
-        -- default-layout-wrapper is the entire page. Since the final
-        -- value passed to hamletToRepHtml cannot be a widget, this allows
-        -- you to use normal widget features in default-layout.
-
-        pc <- widgetToPageContent $ do
-            addStylesheet $ StaticR css_bootstrap_css
-            $(widgetFile "default-layout")
-        withUrlRenderer $(hamletFile "templates/default-layout-wrapper.hamlet")
+        pc <- widgetToPageContent widget
+        withUrlRenderer [hamlet|
+$doctype 5
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    ^{pageHead pc}
+  <body>
+    ^{pageBody pc}
+|]
 
     -- The page to be redirected to when authentication is required.
     authRoute
         :: App
         -> Maybe (Route App)
-    authRoute _ = Just $ AuthR LoginR
+    authRoute _ = Just $ FrontendAppPathR ["login"]
 
     isAuthorized
         :: Route App  -- ^ The route the user is visiting.
         -> Bool       -- ^ Whether or not this is a "write" request.
         -> Handler AuthResult
     -- Routes not requiring authentication.
-    isAuthorized (AuthR _) _ = return Authorized
-    isAuthorized CommentR _ = return Authorized
     isAuthorized HomeR _ = return Authorized
-    isAuthorized ArchiveR _ = return Authorized
-    isAuthorized (PermalinkR _) _ = return Authorized
-    isAuthorized BlogViewR _ = return Authorized
-    isAuthorized (TagR _) _ = return Authorized
-    isAuthorized BlogFeedR _ = return Authorized
-    isAuthorized AboutR _ = return Authorized
-    isAuthorized SearchR _ = return Authorized
+    isAuthorized (FrontendAppPathR _) _ = return Authorized
+    isAuthorized ApiPostsR _ = return Authorized
+    isAuthorized (ApiPostR _) _ = return Authorized
+    isAuthorized (ApiPostCommentR _) _ = return Authorized
+    isAuthorized (ApiCommentUpdateR _) _ = isAuthenticated
+    isAuthorized (ApiCommentDeleteR _) _ = isAuthenticated
+    isAuthorized (ApiUserR _) _ = return Authorized
+    isAuthorized ApiAuthLoginR _ = return Authorized
+    isAuthorized ApiAuthRegisterR _ = return Authorized
+    isAuthorized ApiAuthLogoutR _ = return Authorized
+    isAuthorized ApiSessionR _ = return Authorized
+    isAuthorized ApiMeR _ = isAuthenticated
+    isAuthorized ApiMeUpdateR _ = isAuthenticated
+    isAuthorized ApiAdminDashboardR _ = isAdminUser
+    isAuthorized (ApiAdminArticleDeleteR _) _ = isAdminUser
+    isAuthorized (ApiAdminCommentDeleteR _) _ = isAdminUser
+    isAuthorized (ApiAdminUserDeleteR _) _ = isAdminUser
+    isAuthorized ApiEditorBootstrapR _ = isAuthenticated
+    isAuthorized ApiEditorMineR _ = isAuthenticated
+    isAuthorized (ApiEditorArticleR _) _ = isAuthenticated
+    isAuthorized (ApiEditorDeleteR _) _ = isAuthenticated
+    isAuthorized ApiEditorUploadR _ = isAuthenticated
+    isAuthorized (ApiEditorImageUpdateR _) _ = isAuthenticated
+    isAuthorized (ApiEditorImageDeleteR _) _ = isAuthenticated
+    isAuthorized ApiEditorSaveR _ = isAuthenticated
+    isAuthorized ApiEditorAutosaveR _ = isAuthenticated
     isAuthorized FaviconR _ = return Authorized
     isAuthorized RobotsR _ = return Authorized
     isAuthorized (StaticR _) _ = return Authorized
 
-    isAuthorized ProfileR _ = isAuthenticated
-    isAuthorized UserSettingR _ = isAuthenticated
-    isAuthorized LangR _ = isAuthenticated
-    isAuthorized AdminR _ = isAdminUser
-    isAuthorized NewBlogR _ = isAdminUser
-    isAuthorized (ArticleR _) _ = isAdminUser
-    isAuthorized (ArticleEditR _) _ = isAdminUser
-    isAuthorized (ArticleDeleteR _) _ = isAdminUser
-    isAuthorized (CommentDeleteR _) _ = isAdminUser
-    isAuthorized (UserDeleteR _) _ = isAdminUser
-    isAuthorized PreviewR _ = isAdminUser
-    isAuthorized ImagesR _ = isAdminUser
-    isAuthorized (ImageR _) _ = isAdminUser
-    isAuthorized (ImageUpdateR _) _ = isAdminUser
 
     -- This function creates static content files in the static folder
     -- and names them based on a hash of their content. This allows
@@ -234,8 +192,6 @@ instance YesodBreadcrumbs App where
         :: Route App  -- ^ The route the user is visiting currently.
         -> Handler (Text, Maybe (Route App))
     breadcrumb HomeR = return ("Home", Nothing)
-    breadcrumb (AuthR _) = return ("Login", Just HomeR)
-    breadcrumb ProfileR = return ("Profile", Just HomeR)
     breadcrumb  _ = return ("home", Nothing)
 
 -- How to run database actions.
@@ -255,10 +211,10 @@ instance YesodAuth App where
 
     -- Where to send a user after successful login
     loginDest :: App -> Route App
-    loginDest _ = HomeR
+    loginDest _ = FrontendAppPathR []
     -- Where to send a user after logout
     logoutDest :: App -> Route App
-    logoutDest _ = HomeR
+    logoutDest _ = FrontendAppPathR []
     -- Override the above two destinations when a Referer: header is present
     redirectToReferer :: App -> Bool
     redirectToReferer _ = True
@@ -269,19 +225,17 @@ instance YesodAuth App where
         x <- getBy $ UniqueUser $ credsIdent creds
         case x of
             Just (Entity uid _) -> return $ Authenticated uid
-            Nothing -> Authenticated <$> insert User
-                { userIdent = credsIdent creds
-                , userPassword = Nothing
-                , userDisplayName = Nothing
-                , userBio = Nothing
-                , userIsAdmin = False
-                }
+            Nothing -> return $ UserError InvalidUsernamePass
 
     -- You can add other plugins like Google Email, email or OAuth here
     authPlugins :: App -> [AuthPlugin App]
-    authPlugins app = [authOpenId Claimed []] ++ extraAuthPlugins
+    authPlugins app = extraAuthPlugins
         -- Enable authDummy login if enabled.
         where extraAuthPlugins = [authDummy | appAuthDummyLogin $ appSettings app]
+
+    loginHandler :: AuthHandler App Html
+    loginHandler = do
+        liftHandler $ redirect (FrontendAppPathR ["login"])
 
 -- | Access function to determine if a user is logged in.
 isAuthenticated :: Handler AuthResult
@@ -301,6 +255,10 @@ isAdminUser = do
             | otherwise -> Unauthorized "Admin access required"
 
 instance YesodAuthPersist App
+
+instance HashDBUser User where
+    userPasswordHash = userPassword
+    setPasswordHash passwordHash user = user { userPassword = Just passwordHash }
 
 -- This instance is required to use forms. You can modify renderMessage to
 -- achieve customized and internationalized form validation messages.

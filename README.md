@@ -17,6 +17,24 @@ stack exec -- yesod devel
 
 As your code changes, your site will be automatically recompiled and redeployed to localhost.
 
+## SvelteKit Frontend Split
+
+This repository now includes a `frontend/` SvelteKit scaffold for incrementally moving the UI out of Yesod while keeping Yesod as the backend of record.
+
+Current public JSON APIs:
+
+- `GET /api/posts`
+- `GET /api/post/:slug`
+- `GET /api/user/:ident`
+
+Current frontend routes:
+
+- `frontend/src/routes/+page.svelte`
+- `frontend/src/routes/posts/[slug]/+page.svelte`
+- `frontend/src/routes/users/[ident]/+page.svelte`
+
+Migration notes and rollout order are documented in [docs/sveltekit-migration-plan.md](docs/sveltekit-migration-plan.md).
+
 ## Tests
 
 ```

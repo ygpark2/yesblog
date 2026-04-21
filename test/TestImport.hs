@@ -9,12 +9,14 @@ module TestImport
 import Application           (makeFoundation, makeLogWare)
 import ClassyPrelude         as X hiding (delete, deleteBy, Handler)
 import Database.Persist      as X hiding (get)
-import Database.Persist.Sql  (SqlPersistM, runSqlPersistMPool, rawExecute, rawSql, unSingle)
+import qualified Database.Persist as Persist
+import Database.Persist.Sql  as X (SqlBackend, SqlPersistM, runSqlPersistMPool, rawExecute, rawSql, unSingle, fromSqlKey)
 import Foundation            as X
 import Model                 as X
 import Test.Hspec            as X
 import Yesod.Default.Config2 (useEnv, loadYamlSettings)
 import Yesod.Auth            as X
+import Yesod.Auth.HashDB    (setPassword)
 import Yesod.Test            as X
 import Yesod.Core.Unsafe     (fakeHandlerGetLogger)
 
@@ -24,8 +26,11 @@ import Control.Monad.Logger                 (runLoggingT)
 import Lens.Micro                           (set)
 import Settings (appDatabaseConf)
 import Yesod.Core (messageLoggerSource)
-import Yesod.Form.Fields (Textarea (..))
+import Yesod.Form.Fields as X (Textarea (..))
 import Yesod.Markdown (Markdown (..))
+
+defaultTestPassword :: Text
+defaultTestPassword = "password123"
 
 runDB :: SqlPersistM a -> YesodExample App a
 runDB query = do
@@ -36,6 +41,9 @@ runHandler :: Handler a -> YesodExample App a
 runHandler handler = do
     app <- getTestYesod
     fakeHandlerGetLogger appLogger app handler
+
+getRecord :: Persist.PersistRecordBackend record SqlBackend => Key record -> YesodExample App (Maybe record)
+getRecord = runDB . Persist.get
 
 withApp :: SpecWith (TestApp App) -> Spec
 withApp = before $ do
@@ -78,59 +86,80 @@ getTables = do
     tables <- rawSql "SELECT name FROM sqlite_master WHERE type = 'table';" []
     return (fmap unSingle tables)
 
--- | Authenticate as a user. This relies on the `auth-dummy-login: true` flag
--- being set in test-settings.yaml, which enables dummy authentication in
--- Foundation.hs
 authenticateAs :: Entity User -> YesodExample App ()
 authenticateAs (Entity _ u) = do
     request $ do
         setMethod "POST"
         addPostParam "ident" $ userIdent u
-        setUrl $ AuthR $ PluginR "dummy" []
+        addPostParam "password" defaultTestPassword
+        setUrl ApiAuthLoginR
+    statusIs 200
 
 -- | Create a user.  The dummy email entry helps to confirm that foreign-key
 -- checking is switched off in wipeDB for those database backends which need it.
 createUser :: Text -> YesodExample App (Entity User)
-createUser ident = runDB $ do
-    insertEntity User
+createUser ident = createUserWithPassword ident defaultTestPassword
+
+createAdmin :: Text -> YesodExample App (Entity User)
+createAdmin ident = createAdminWithPassword ident defaultTestPassword
+
+createUserWithPassword :: Text -> Text -> YesodExample App (Entity User)
+createUserWithPassword ident password = runDB $ do
+    user <- liftIO $ setPassword password User
         { userIdent = ident
         , userPassword = Nothing
         , userDisplayName = Nothing
         , userBio = Nothing
         , userIsAdmin = False
         }
+    insertEntity user
 
-createAdmin :: Text -> YesodExample App (Entity User)
-createAdmin ident = runDB $ do
-    insertEntity User
+createAdminWithPassword :: Text -> Text -> YesodExample App (Entity User)
+createAdminWithPassword ident password = runDB $ do
+    user <- liftIO $ setPassword password User
         { userIdent = ident
         , userPassword = Nothing
         , userDisplayName = Nothing
         , userBio = Nothing
         , userIsAdmin = True
         }
+    insertEntity user
 
 createUserWithProfile :: Text -> Maybe Text -> Maybe Text -> YesodExample App (Entity User)
 createUserWithProfile ident displayName bio = runDB $ do
-    insertEntity User
+    user <- liftIO $ setPassword defaultTestPassword User
         { userIdent = ident
         , userPassword = Nothing
         , userDisplayName = displayName
         , userBio = Textarea <$> bio
         , userIsAdmin = False
         }
+    insertEntity user
 
 createArticle :: UserId -> Text -> Text -> YesodExample App (Entity Article)
-createArticle authorId title slug = runDB $ do
+createArticle authorId title slug =
+    createArticleWithContent authorId title ("content for " <> title) slug False []
+
+createArticleWithContent :: UserId -> Text -> Text -> Text -> Bool -> [Text] -> YesodExample App (Entity Article)
+createArticleWithContent authorId title content slug isDraft tags = runDB $ do
     now <- liftIO getCurrentTime
-    insertEntity Article
+    articleEntity@(Entity articleId _) <- insertEntity Article
         { articleAuthor = authorId
         , articleTitle = title
-        , articleContent = Markdown ("content for " <> title)
+        , articleContent = Markdown content
         , articleSlug = slug
-        , articleDraft = False
+        , articleDraft = isDraft
         , articleCreatedAt = now
+        , articleUpdatedAt = now
         }
+    forM_ tags $ \tagName ->
+        insert_ $ Tag tagName articleId
+    pure articleEntity
+
+createComment :: ArticleId -> Text -> Text -> YesodExample App (Entity Comment)
+createComment articleId authorName content = runDB $ do
+    now <- liftIO getCurrentTime
+    insertEntity $ Comment authorName content articleId now
 
 createImage :: String -> Maybe Text -> YesodExample App (Entity Image)
 createImage filename description = runDB $ do

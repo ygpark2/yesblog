@@ -20,8 +20,6 @@ import Database.Persist.Sqlite     (SqliteConf)
 import Language.Haskell.TH.Syntax  (Exp, Name, Q)
 import Network.Wai.Handler.Warp    (HostPreference)
 import Yesod.Default.Config2       (applyEnvValue, configSettingsYml)
-import Yesod.Default.Util          (WidgetFileSettings, widgetFileNoReload,
-                                    widgetFileReload)
 
 -- | Runtime settings to configure this application. These settings can be
 -- loaded from various sources: defaults, environment variables, config files,
@@ -61,6 +59,12 @@ data AppSettings = AppSettings
 
     , appAuthDummyLogin         :: Bool
     -- ^ Indicate if auth dummy login should be enabled.
+    , appSeedAdminIdent         :: Text
+    -- ^ Default admin username created during startup seeding.
+    , appSeedAdminPassword      :: Text
+    -- ^ Default admin password created during startup seeding.
+    , appSeedAdminDisplayName   :: Text
+    -- ^ Default admin display name created during startup seeding.
     }
 
 instance FromJSON AppSettings where
@@ -90,30 +94,15 @@ instance FromJSON AppSettings where
         appAnalytics              <- o .:? "analytics"
 
         appAuthDummyLogin         <- o .:? "auth-dummy-login"      .!= dev
+        appSeedAdminIdent         <- o .:? "seed-admin-ident"      .!= "admin"
+        appSeedAdminPassword      <- o .:? "seed-admin-password"   .!= "admin123456"
+        appSeedAdminDisplayName   <- o .:? "seed-admin-display-name" .!= "YesBlog Admin"
 
         return AppSettings {..}
-
--- | Settings for 'widgetFile', such as which template languages to support and
--- default Hamlet settings.
---
--- For more information on modifying behavior, see:
---
--- https://github.com/yesodweb/yesod/wiki/Overriding-widgetFile
-widgetFileSettings :: WidgetFileSettings
-widgetFileSettings = def
 
 -- | How static files should be combined.
 combineSettings :: CombineSettings
 combineSettings = def
-
--- The rest of this file contains settings which rarely need changing by a
--- user.
-
-widgetFile :: String -> Q Exp
-widgetFile = (if appReloadTemplates compileTimeAppSettings
-                then widgetFileReload
-                else widgetFileNoReload)
-              widgetFileSettings
 
 -- | Raw bytes at compile time of @config/settings.yml@
 configSettingsYmlBS :: ByteString

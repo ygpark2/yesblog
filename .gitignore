@@ -1,4 +1,13 @@
 dist*
+build/
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
+frontend/dist/
+config/front/node_modules/
+config/front/build/
+config/front/dist/
+static/app/
 static/tmp/
 static/combined/
 config/client_session_key.aes
@@ -26,4 +35,3 @@ cabal.sandbox.config
 *.keter
 *~
 \#*
-

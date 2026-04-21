@@ -17,24 +17,54 @@ postForm mart mtags html = do
   Entity userId _ <- lift requireAuth
   (r,widget) <- renderDivs
     (
-    let art = Article <$> pure userId
-                      <*> areq textField     fsTitle   (articleTitle   <$> mart)
-                      <*> areq markdownField fsContent (articleContent <$> mart)
-                      <*> areq textField     fsSlug    (articleSlug    <$> mart)
-                      <*> areq checkBoxField fsDraft   (articleDraft   <$> mart)
-                      <*> lift (liftIO getCurrentTime)
+    let art now = Article <$> pure userId
+                          <*> areq textField     fsTitle   (articleTitle   <$> mart)
+                          <*> areq markdownField fsContent (articleContent <$> mart)
+                          <*> areq textField     fsSlug    (articleSlug    <$> mart)
+                          <*> areq checkBoxField fsDraft   (articleDraft   <$> mart)
+                          <*> pure (fromMaybe now $ articleCreatedAt <$> mart)
+                          <*> pure now
         defaultTags = Just (fmap T.unwords mtags)
         tags = (\mt -> T.words (fromMaybe "" mt)) <$> aopt textField fsTag defaultTags
-    in (,) <$> art <*> tags
+    in (,) <$> (lift (liftIO getCurrentTime) >>= art) <*> tags
     )
     html
   return (r,widget)
       where
-        fsTitle   = (fieldSettingsLabel ("Title" :: Text))   { fsAttrs = [("class", "col-md-12")] }
-        fsContent = (fieldSettingsLabel ("Content" :: Text)) { fsAttrs = [("class", "col-md-12")] }
-        fsSlug    = (fieldSettingsLabel ("Slug" :: Text))    { fsAttrs = [("class", "col-md-12")] }
-        fsTag     = (fieldSettingsLabel ("Tags" :: Text))    { fsAttrs = [("class", "col-md-12")] }
-        fsDraft   = (fieldSettingsLabel ("Draft" :: Text))   { fsAttrs = [("class", "col-md-12")] }
+        fsTitle   = (fieldSettingsLabel ("Title" :: Text))
+          { fsAttrs =
+              [ ("class", "col-md-12")
+              , ("id", "write-title")
+              , ("placeholder", "Write a strong title")
+              ]
+          }
+        fsContent = (fieldSettingsLabel ("Content" :: Text))
+          { fsAttrs =
+              [ ("class", "col-md-12")
+              , ("id", "write-content")
+              , ("placeholder", "Start writing...")
+              ]
+          }
+        fsSlug    = (fieldSettingsLabel ("Slug" :: Text))
+          { fsAttrs =
+              [ ("class", "col-md-12")
+              , ("id", "write-slug")
+              , ("placeholder", "auto-generated-from-title")
+              ]
+          }
+        fsTag     = (fieldSettingsLabel ("Tags" :: Text))
+          { fsAttrs =
+              [ ("class", "col-md-12")
+              , ("id", "write-tags")
+              , ("placeholder", "essay devlog notes")
+              ]
+          }
+        fsDraft   = (fieldSettingsLabel ("Draft" :: Text))
+          { fsAttrs =
+              [ ("class", "col-md-12")
+              , ("id", "write-draft")
+              ]
+          }
 
 commentForm :: ArticleId -> Form Comment
 commentForm articleId extra = do

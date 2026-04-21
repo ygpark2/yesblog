@@ -1,0 +1,21 @@
+{
+  "name": "yesblog-frontend",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev --host 0.0.0.0 --port 3900",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 3900",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "3.0.10",
+    "@sveltejs/kit": "2.57.1",
+    "@sveltejs/vite-plugin-svelte": "7.0.0",
+    "svelte": "5.55.4",
+    "svelte-check": "4.4.6",
+    "typescript": "5.9.3",
+    "vite": "8.0.9"
+  }
+}
