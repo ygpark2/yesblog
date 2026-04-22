@@ -8,6 +8,7 @@ config/front/node_modules/
 config/front/build/
 config/front/dist/
 static/app/
+static/files/
 static/tmp/
 static/combined/
 config/client_session_key.aes
@@ -15,6 +16,7 @@ config/client_session_key.aes
 cabal-dev/
 yesod-devel/
 data/*.sqlite*
+yesblog.sqlite3
 
 cabal.sandbox.config
 
