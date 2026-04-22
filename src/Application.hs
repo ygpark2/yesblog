@@ -24,6 +24,7 @@ module Application
 import Control.Monad.Logger                 (liftLoc, runLoggingT)
 import Database.Persist.Sql                 (ConnectionPool, Single (..),
                                              rawExecute, rawSql)
+import Database.Persist.Postgresql          (createPostgresqlPool)
 import Database.Persist.Sqlite              (createSqlitePool, runSqlPool,
                                              sqlDatabase, sqlPoolSize)
 import Import
@@ -50,6 +51,9 @@ import Handler.Api.Admin
 import Handler.Api.Editor
 import Handler.Api.Legacy
 import Handler.Api.Public
+import Settings                             (DatabaseConfig (..),
+                                             databasePoolSize,
+                                             postgresqlConnectionString)
 
 -- This line actually creates our YesodDispatch instance. It is the second half
 -- of the call to mkYesodData which occurs in Foundation.hs. Please see the
@@ -83,19 +87,28 @@ makeFoundation appSettings = do
         logFunc = messageLoggerSource tempFoundation appLogger
 
     -- Create the database connection pool
-    pool <- flip runLoggingT logFunc $ createSqlitePool
-        (sqlDatabase $ appDatabaseConf appSettings)
-        (sqlPoolSize $ appDatabaseConf appSettings)
+    pool <- flip runLoggingT logFunc $
+        case appDatabaseConf appSettings of
+            SqliteDatabase sqliteConf ->
+                createSqlitePool
+                    (sqlDatabase sqliteConf)
+                    (sqlPoolSize sqliteConf)
+            PostgresqlDatabase postgresConf ->
+                createPostgresqlPool
+                    (postgresqlConnectionString postgresConf)
+                    (databasePoolSize $ appDatabaseConf appSettings)
 
     -- Perform database migration using our application's logging settings.
-    runLoggingT (runSqlPool migrateSchema pool) logFunc
+    runLoggingT (runSqlPool (migrateSchema $ appDatabaseConf appSettings) pool) logFunc
     seedAdminAccount appSettings pool
 
     -- Return the foundation
     return $ mkFoundation pool
 
-migrateSchema :: forall m. MonadIO m => ReaderT SqlBackend m ()
-migrateSchema = do
+migrateSchema :: forall m. MonadIO m => DatabaseConfig -> ReaderT SqlBackend m ()
+migrateSchema (PostgresqlDatabase _) =
+    runMigration migrateAll
+migrateSchema (SqliteDatabase _) = do
     tables <- fmap unSingle <$> (rawSql
         "SELECT name FROM sqlite_master WHERE type = 'table'"
         [] :: ReaderT SqlBackend m [Single Text])

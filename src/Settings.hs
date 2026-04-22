@@ -11,12 +11,17 @@
 module Settings where
 
 import ClassyPrelude.Yesod
+import Control.Monad.Fail          (fail)
 import qualified Control.Exception as Exception
-import Data.Aeson                  (Result (..), fromJSON, withObject, (.!=),
-                                    (.:?))
+import Data.Aeson                  (Object, Result (..), Value (Object),
+                                    fromJSON, withObject, (.!=), (.:?))
+import Data.Aeson.Types            (Parser)
+import qualified Data.Char as Char
 import Data.FileEmbed              (embedFile)
+import qualified Data.Text as T
 import Data.Yaml                   (decodeEither')
-import Database.Persist.Sqlite     (SqliteConf)
+import Database.Persist.Postgresql (ConnectionString)
+import Database.Persist.Sqlite     (SqliteConf, sqlPoolSize)
 import Language.Haskell.TH.Syntax  (Exp, Name, Q)
 import Network.Wai.Handler.Warp    (HostPreference)
 import Yesod.Default.Config2       (applyEnvValue, configSettingsYml)
@@ -27,7 +32,7 @@ import Yesod.Default.Config2       (applyEnvValue, configSettingsYml)
 data AppSettings = AppSettings
     { appStaticDir              :: String
     -- ^ Directory from which to serve static files.
-    , appDatabaseConf           :: SqliteConf
+    , appDatabaseConf           :: DatabaseConfig
     -- ^ Configuration settings for accessing the database.
     , appRoot                   :: Maybe Text
     -- ^ Base for all generated URLs. If @Nothing@, determined
@@ -66,6 +71,89 @@ data AppSettings = AppSettings
     , appSeedAdminDisplayName   :: Text
     -- ^ Default admin display name created during startup seeding.
     }
+
+data DatabaseConfig
+    = SqliteDatabase SqliteConf
+    | PostgresqlDatabase PostgresqlConf
+
+data PostgresqlConf = PostgresqlConf
+    { pgConnStrText :: Text
+    , pgPoolSize    :: Int
+    }
+
+postgresqlConnectionString :: PostgresqlConf -> ConnectionString
+postgresqlConnectionString = encodeUtf8 . pgConnStrText
+
+databasePoolSize :: DatabaseConfig -> Int
+databasePoolSize (SqliteDatabase conf) = sqlPoolSize conf
+databasePoolSize (PostgresqlDatabase conf) = pgPoolSize conf
+
+instance FromJSON DatabaseConfig where
+    parseJSON = withObject "DatabaseConfig" $ \o -> do
+        mKind <- fmap (fmap normalizeDatabaseKind) $ o .:? "kind"
+        case mKind of
+            Just "sqlite" -> SqliteDatabase <$> parseJSON (Object o)
+            Just "postgres" -> PostgresqlDatabase <$> parsePostgresqlConf o
+            Just "postgresql" -> PostgresqlDatabase <$> parsePostgresqlConf o
+            Just other -> fail $ "Unsupported database kind: " <> unpack other
+            Nothing -> do
+                mConnStr <- o .:? "connstr"
+                mHost <- o .:? "host"
+                mUser <- o .:? "user"
+                mPort <- o .:? "port" :: Parser (Maybe Int)
+                case (mConnStr :: Maybe Text, mHost :: Maybe Text, mUser :: Maybe Text, mPort) of
+                    (Just _, _, _, _) -> PostgresqlDatabase <$> parsePostgresqlConf o
+                    (_, Just _, _, _) -> PostgresqlDatabase <$> parsePostgresqlConf o
+                    (_, _, Just _, _) -> PostgresqlDatabase <$> parsePostgresqlConf o
+                    (_, _, _, Just _) -> PostgresqlDatabase <$> parsePostgresqlConf o
+                    _ -> SqliteDatabase <$> parseJSON (Object o)
+
+normalizeDatabaseKind :: Text -> Text
+normalizeDatabaseKind = toLower
+
+parsePostgresqlConf :: Object -> Parser PostgresqlConf
+parsePostgresqlConf o = do
+    poolSize <- o .:? "poolsize" .!= 10
+    mConnStr <- o .:? "connstr"
+    connStr <- case mConnStr of
+        Just rawConnStr -> pure $ T.strip rawConnStr
+        Nothing -> buildPostgresqlConnStr o
+    pure PostgresqlConf
+        { pgConnStrText = connStr
+        , pgPoolSize = poolSize
+        }
+
+buildPostgresqlConnStr :: Object -> Parser Text
+buildPostgresqlConnStr o = do
+    databaseName <- o .: "database"
+    host <- o .:? "host" .!= "127.0.0.1"
+    port <- o .:? "port" .!= (5432 :: Int)
+    user <- o .:? "user" .!= "postgres"
+    password <- o .:? "password" .!= ""
+    sslmode <- o .:? "sslmode"
+    let baseParts =
+            [ ("host", host)
+            , ("port", tshow port)
+            , ("user", user)
+            , ("dbname", databaseName)
+            ]
+        passwordPart =
+            if password == ""
+                then []
+                else [("password", password)]
+        sslmodePart =
+            maybe [] (\mode -> [("sslmode", mode)]) sslmode
+    pure $ unwords $ map renderConnPart $ baseParts <> passwordPart <> sslmodePart
+
+renderConnPart :: (Text, Text) -> Text
+renderConnPart (key, value) = key <> "=" <> quoteConnValue value
+
+quoteConnValue :: Text -> Text
+quoteConnValue value
+    | needsQuoting value = "'" <> T.replace "'" "\\'" value <> "'"
+    | otherwise = value
+  where
+    needsQuoting = any (\char -> Char.isSpace char || char == '\'' || char == '\\')
 
 instance FromJSON AppSettings where
     parseJSON = withObject "AppSettings" $ \o -> do

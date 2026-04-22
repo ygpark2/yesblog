@@ -2,6 +2,7 @@
   import { base } from '$app/paths';
   import { env } from '$env/dynamic/public';
   import { onMount } from 'svelte';
+  import { apiFormPost } from '$lib/api';
   import { renderMarkdown } from '$lib/markdown';
   import type { ApiPostSummary, EditorArticle, EditorBootstrap, EditorMine, EditorSaveResponse } from '$lib/types';
 
@@ -19,8 +20,9 @@
   let status = $state('Loading editor…');
   let previewOpen = $state(false);
   let slugTouched = $state(false);
-  let autosaveTimer = $state<ReturnType<typeof setTimeout> | null>(null);
+  let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
   let loading = $state(true);
+  let loginRequired = $state(false);
   let selectedArticleId = $state('');
   let permalink = $state('');
   let uploadFile = $state<File | null>(null);
@@ -132,16 +134,24 @@
 
   function persistLocalDraft() {
     if (typeof localStorage === 'undefined') return;
-    if (!hasMeaningfulContent()) {
-      localStorage.removeItem(LOCAL_DRAFT_KEY);
-      return;
+    try {
+      if (!hasMeaningfulContent()) {
+        localStorage.removeItem(LOCAL_DRAFT_KEY);
+        return;
+      }
+      localStorage.setItem(LOCAL_DRAFT_KEY, JSON.stringify(currentLocalDraft()));
+    } catch {
+      // Ignore storage failures so editor actions still work.
     }
-    localStorage.setItem(LOCAL_DRAFT_KEY, JSON.stringify(currentLocalDraft()));
   }
 
   function clearLocalDraft() {
     if (typeof localStorage === 'undefined') return;
-    localStorage.removeItem(LOCAL_DRAFT_KEY);
+    try {
+      localStorage.removeItem(LOCAL_DRAFT_KEY);
+    } catch {
+      // Ignore storage failures so editor actions still work.
+    }
   }
 
   function markSavedState() {
@@ -172,6 +182,23 @@
 
   function closePreview() {
     previewOpen = false;
+  }
+
+  function replaceStudioHistory(nextPath: string) {
+    if (typeof window === 'undefined') return;
+    try {
+      window.history.replaceState({}, '', nextPath);
+    } catch {
+      // Ignore history API failures and keep the editor usable.
+    }
+  }
+
+  function redirectToLogin() {
+    loginRequired = true;
+    status = 'Log in first. Redirecting to the login page…';
+    if (typeof window !== 'undefined') {
+      window.location.assign(`${base}/login`);
+    }
   }
 
   function syncImageDraftDescriptions() {
@@ -228,7 +255,8 @@
     permalink = item.draft ? '' : `${base}/posts/${item.slug}`;
     slugTouched = true;
     status = item.draft ? 'Draft loaded' : 'Published article loaded';
-    window.history.replaceState({}, '', `${base}/studio?articleId=${item.id}`);
+    loginRequired = false;
+    replaceStudioHistory(`${base}/studio?articleId=${item.id}`);
     markSavedState();
   }
 
@@ -242,12 +270,18 @@
     draft = true;
     permalink = '';
     slugTouched = false;
+    loginRequired = false;
     status = 'New draft';
-    window.history.replaceState({}, '', `${base}/studio`);
+    replaceStudioHistory(`${base}/studio`);
     markSavedState();
   }
 
   async function saveArticle(nextDraft: boolean) {
+    if (loginRequired) {
+      redirectToLogin();
+      return;
+    }
+
     status = nextDraft ? 'Saving draft…' : 'Publishing…';
     const payload = new URLSearchParams({
       title,
@@ -261,35 +295,35 @@
       payload.set('articleId', articleId);
     }
 
-    const response = await fetch(`${backendBaseUrl}/api/editor/save`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-
-    if (!response.ok) {
-      status = 'Save failed';
+    let data: EditorSaveResponse;
+    try {
+      data = await apiFormPost<EditorSaveResponse>('/api/editor/save', payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Save failed.';
+      if (/login|auth|401|403/i.test(message)) {
+        redirectToLogin();
+        return;
+      }
+      status = message;
       return;
     }
 
-    const data: EditorSaveResponse = await response.json();
     articleId = data.articleId || articleId;
     selectedArticleId = data.articleId || selectedArticleId;
     slug = data.slug || slug;
     draft = data.draft;
     permalink = data.draft || !data.permalink ? '' : `${backendBaseUrl}${data.permalink}`;
     status = data.draft ? 'Draft saved' : 'Published';
+    loginRequired = false;
     await Promise.all([fetchBootstrap(), fetchMine()]);
     if (articleId) {
-      window.history.replaceState({}, '', `${base}/studio?articleId=${articleId}`);
+      replaceStudioHistory(`${base}/studio?articleId=${articleId}`);
     }
     markSavedState();
   }
 
   async function autosave() {
+    if (loginRequired) return;
     if (!title.trim() && !content.trim() && !tags.trim()) return;
     const payload = new URLSearchParams({
       title,
@@ -302,33 +336,37 @@
       payload.set('articleId', articleId);
     }
 
-    const response = await fetch(`${backendBaseUrl}/api/editor/autosave`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-
-    if (!response.ok) {
-      status = 'Autosave failed';
+    let data: { articleId?: string; slug?: string };
+    try {
+      data = await apiFormPost<{ articleId?: string; slug?: string }>('/api/editor/autosave', payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Autosave failed.';
+      if (/login|auth|401|403/i.test(message)) {
+        loginRequired = true;
+        status = 'Log in to re-enable autosave.';
+        return;
+      }
+      status = message;
       return;
     }
 
-    const data = await response.json();
     articleId = data.articleId || articleId;
     selectedArticleId = articleId;
     if (!slugTouched && data.slug) {
       slug = data.slug;
     }
     draft = true;
+    loginRequired = false;
     status = `Draft autosaved at ${new Date().toLocaleTimeString()}`;
     markSavedState();
   }
 
   function scheduleAutosave() {
     if (autosaveTimer) clearTimeout(autosaveTimer);
+    if (!draft || loginRequired) {
+      autosaveTimer = null;
+      return;
+    }
     autosaveTimer = setTimeout(() => {
       autosave();
     }, 1500);
@@ -345,44 +383,6 @@
   function insertMarkdown(snippet: string) {
     content = `${content}${content.endsWith('\n') || !content ? '' : '\n'}${snippet}\n`;
     scheduleAutosave();
-  }
-
-  function applySelectionTransform(transform: (selected: string) => string, fallback = '') {
-    if (!editorTextarea) {
-      if (fallback) {
-        insertMarkdown(fallback);
-      }
-      return;
-    }
-
-    const start = editorTextarea.selectionStart;
-    const end = editorTextarea.selectionEnd;
-    const selected = content.slice(start, end);
-    const replacement = transform(selected || fallback);
-    content = `${content.slice(0, start)}${replacement}${content.slice(end)}`;
-    scheduleAutosave();
-
-    requestAnimationFrame(() => {
-      if (!editorTextarea) return;
-      const cursor = start + replacement.length;
-      editorTextarea.focus();
-      editorTextarea.setSelectionRange(cursor, cursor);
-    });
-  }
-
-  function wrapSelection(prefix: string, suffix = prefix, fallback = 'text') {
-    applySelectionTransform((selected) => `${prefix}${selected || fallback}${suffix}`, fallback);
-  }
-
-  function prefixSelection(prefix: string, fallback = 'Item') {
-    applySelectionTransform(
-      (selected) =>
-        (selected || fallback)
-          .split('\n')
-          .map((line) => `${prefix}${line}`)
-          .join('\n'),
-      fallback
-    );
   }
 
   function handleEditorScroll() {
@@ -620,32 +620,6 @@
     await uploadImageFile(uploadFile);
   }
 
-  async function deleteArticle() {
-    if (!articleId) {
-      status = 'Nothing to delete';
-      return;
-    }
-
-    const confirmed = window.confirm('Delete this article permanently?');
-    if (!confirmed) return;
-
-    status = 'Deleting article…';
-    const response = await fetch(`${backendBaseUrl}/api/editor/article/${articleId}/delete`, {
-      method: 'POST',
-      credentials: 'include'
-    });
-
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Delete failed');
-      return;
-    }
-
-    await Promise.all([fetchBootstrap(), fetchMine()]);
-    startFreshDraft();
-    status = 'Article deleted';
-    clearLocalDraft();
-  }
-
   onMount(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!hasUnsavedChanges()) return;
@@ -666,6 +640,7 @@
       try {
         await fetchBootstrap();
         await fetchMine();
+        loginRequired = false;
         const queryParams = new URLSearchParams(window.location.search);
         const requestedArticleId = queryParams.get('articleId');
         const storedDraftRaw = localStorage.getItem(LOCAL_DRAFT_KEY);
@@ -685,7 +660,8 @@
           markSavedState();
         }
       } catch (_error) {
-        status = 'Open the backend login first, then come back here.';
+        loginRequired = true;
+        redirectToLogin();
       } finally {
         loading = false;
         isHydrated = true;
@@ -708,13 +684,22 @@
   });
 
   $effect(() => {
-    if (!loading) {
+    if (!loading && draft) {
       title;
       slug;
       content;
       tags;
       draft;
       scheduleAutosave();
+    }
+  });
+
+  $effect(() => {
+    if (!draft || loginRequired) {
+      if (autosaveTimer) {
+        clearTimeout(autosaveTimer);
+        autosaveTimer = null;
+      }
     }
   });
 
@@ -839,37 +824,6 @@
         {/each}
       </div>
 
-      <div class="tag-row">
-        <button class="chip studio-chip-button" type="button" onclick={() => wrapSelection('**')}>Bold</button>
-        <button class="chip studio-chip-button" type="button" onclick={() => wrapSelection('*')}>Italic</button>
-        <button class="chip studio-chip-button" type="button" onclick={() => wrapSelection('[', '](https://example.com)', 'link text')}>
-          Link
-        </button>
-        <button class="chip studio-chip-button" type="button" onclick={() => prefixSelection('- ', 'List item')}>Bullet list</button>
-        <button class="chip studio-chip-button" type="button" onclick={() => prefixSelection('1. ', 'List item')}>Numbered list</button>
-      </div>
-
-      <div class="tag-row">
-        <button class="chip studio-chip-button" type="button" onclick={() => insertMarkdown('## Heading')}>Heading</button>
-        <button class="chip studio-chip-button" type="button" onclick={() => insertMarkdown('### Subheading')}>Subheading</button>
-        <button class="chip studio-chip-button" type="button" onclick={() => insertMarkdown('> Quote')}>Quote</button>
-        <button class="chip studio-chip-button" type="button" onclick={() => insertMarkdown('```ts\nconsole.log("hello");\n```')}>Code</button>
-      </div>
-
-      <div class="action-row">
-        <button class="action-link" type="button" onclick={startFreshDraft}>New draft</button>
-        <button class="action-link" type="button" onclick={() => saveArticle(true)}>
-          {draft ? 'Save draft' : 'Move to draft'}
-        </button>
-        <button class="action-link" type="button" onclick={() => saveArticle(false)}>
-          {draft ? 'Publish' : 'Update live post'}
-        </button>
-        {#if permalink}
-          <a class="action-link" href={permalink}>View live post</a>
-        {/if}
-        <button class="action-link action-link-danger" type="button" onclick={deleteArticle}>Delete</button>
-        <a class="action-link" href={`${base}/me/posts`}>My posts</a>
-      </div>
     </section>
 
     <aside class="panel-card stack studio-side-library">

@@ -1,3 +1,4 @@
+import { error } from '@sveltejs/kit';
 import { apiFetch } from '$lib/api';
 import type { ApiPostDetail, ApiPostSummary } from '$lib/types';
 
@@ -7,6 +8,10 @@ type PostResponse = {
 };
 
 export async function load({ fetch, params }) {
-  const data = await apiFetch<PostResponse>(fetch, `/api/post/${params.slug}`);
-  return data;
+  try {
+    const data = await apiFetch<PostResponse>(fetch, `/api/post/${params.slug}`);
+    return data;
+  } catch {
+    throw error(404, `Post "${params.slug}" was not found.`);
+  }
 }

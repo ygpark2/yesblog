@@ -30,7 +30,6 @@
     <div class="meta-row">
       <span class="chip">{data.meta.total} published posts</span>
       <a class="action-link" href={`${base}/studio`}>Open writer studio</a>
-      <a class="action-link" href={`${base}/studio`}>Split studio</a>
     </div>
   </div>
 

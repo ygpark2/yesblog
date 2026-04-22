@@ -36,7 +36,7 @@
     {#if mine?.drafts?.length}
       {#each mine.drafts as post}
         <div class="stack" style="gap: 12px;">
-          <PostCard {post} />
+          <PostCard {post} live={false} />
           <div class="action-row">
             <a class="action-link" href={`${base}/studio?articleId=${post.id}`}>Edit in studio</a>
           </div>

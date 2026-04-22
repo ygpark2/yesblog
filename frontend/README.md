@@ -35,6 +35,8 @@ cp .env.example .env
 
 By default the frontend uses same-origin requests. Set `PUBLIC_YESBLOG_API_BASE_URL` only if you intentionally want a different backend origin.
 
+When you run the frontend dev server on `http://localhost:3900`, Vite proxies `/api/*` requests to the local Yesod app on `http://localhost:3000`. Keep the backend running there if you want login, autosave, and editor APIs to work in dev without setting `PUBLIC_YESBLOG_API_BASE_URL`.
+
 ## Current Pages
 
 - `/` homepage backed by `/api/posts`

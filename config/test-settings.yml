@@ -1,4 +1,5 @@
 database:
+  kind: sqlite
   # NOTE: By design, this setting prevents the SQLITE_DATABASE environment variable
   # from affecting test runs, so that we don't accidentally affect the
   # production database during testing. If you're not concerned about that and

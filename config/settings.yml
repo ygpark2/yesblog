@@ -33,9 +33,14 @@ seed-admin-display-name: "_env:YESOD_SEED_ADMIN_DISPLAY_NAME:YesBlog Admin"
 # See https://github.com/yesodweb/yesod/wiki/Configuration#parsing-numeric-values-as-strings
 
 database:
+  kind: "_env:YESOD_DB_KIND:sqlite"
   # See config/test-settings.yml for an override during tests
   database: "_env:YESOD_SQLITE_DATABASE:data/yesblog.sqlite3"
   poolsize: "_env:YESOD_SQLITE_POOLSIZE:10"
+  # PostgreSQL example:
+  # kind: "_env:YESOD_DB_KIND:postgresql"
+  # connstr: "_env:YESOD_PG_CONNSTR:host=127.0.0.1 port=5432 user=postgres password=postgres dbname=yesblog"
+  # poolsize: "_env:YESOD_PG_POOLSIZE:10"
 
 copyright: Insert copyright statement here
 #analytics: UA-YOURCODE

@@ -122,6 +122,7 @@ tests:
       - yesod-auth-hashdb
       - yesod-form
       - persistent
+      - persistent-postgresql
       - persistent-sqlite
       - resourcet
       - monad-logger

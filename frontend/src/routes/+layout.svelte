@@ -20,7 +20,6 @@
       <a class="nav-link" href={`${base}/archive`}>Archive</a>
       <a class="nav-link" href={`${base}/search`}>Search</a>
       <a class="nav-link" href={`${base}/studio`}>Studio</a>
-      <a class="nav-link" href={`${base}/studio`}>Write</a>
     </nav>
   </div>
 </header>
