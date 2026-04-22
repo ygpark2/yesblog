@@ -48,7 +48,7 @@ a {
 }
 
 .brand {
-  font-size: clamp(2rem, 4vw, 3.4rem);
+  font-size: clamp(1.5rem, 3vw, 2.55rem);
   font-weight: 700;
   letter-spacing: -0.08em;
   text-decoration: none;
@@ -58,6 +58,10 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
+}
+
+.site-header .nav-link {
+  min-height: 32px;
 }
 
 .nav-link,
@@ -99,7 +103,7 @@ a {
 }
 
 .page-shell {
-  padding: 42px 0 72px;
+  padding: 14px 0 72px;
 }
 
 .hero-card,
@@ -407,6 +411,14 @@ a {
   gap: 18px;
 }
 
+.studio-shell {
+  gap: 0;
+}
+
+.studio-shell > * + * {
+  margin-top: 8px;
+}
+
 .studio-layout {
   display: grid;
   gap: 24px;
@@ -557,6 +569,7 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 18px;
+  padding: 8px 24px;
   background:
     linear-gradient(135deg, rgba(255, 248, 195, 0.98) 0%, rgba(126, 240, 178, 0.78) 100%);
 }
@@ -579,6 +592,10 @@ a {
   flex-wrap: wrap;
   gap: 12px;
   align-items: center;
+}
+
+.studio-publish-bar-actions .action-link {
+  min-height: 34px;
 }
 
 .studio-primary-action {

@@ -717,25 +717,7 @@
   });
 </script>
 
-<section class="stack">
-  <div class="hero-card stack">
-    <p class="eyebrow">Writer studio</p>
-    <h1 class="hero-title">Focused writing studio with Yesod rules underneath.</h1>
-    <p class="lede">
-      This app is now built into the Yesod static folder and served from the same site. The backend still owns auth,
-      slug rules, publishing, and autosave.
-    </p>
-    <div class="meta-row">
-      <span class="chip">{bootstrap?.meta.draftCount ?? 0} drafts</span>
-      <span class="chip">{bootstrap?.meta.publishedCount ?? 0} published</span>
-      <span class:chip-live={!hasUnsavedChanges()} class="chip">{hasUnsavedChanges() ? 'Unsaved changes' : 'Saved state'}</span>
-      <button class="action-link" type="button" onclick={() => (previewOpen = !previewOpen)}>
-        {previewOpen ? 'Hide preview' : 'Open preview'}
-      </button>
-      <a class="action-link" href={`${base}/login`}>Log in</a>
-    </div>
-  </div>
-
+<section class="stack studio-shell">
   <section class="panel-card studio-publish-bar">
     <div class="studio-publish-bar-copy">
       <p class="eyebrow">Writing actions</p>
@@ -749,6 +731,9 @@
       </button>
       <button class="action-link studio-primary-action" type="button" onclick={() => saveArticle(false)}>
         {draft ? 'Publish now' : 'Update live post'}
+      </button>
+      <button class="action-link" type="button" onclick={() => (previewOpen = !previewOpen)}>
+        {previewOpen ? 'Hide preview' : 'Open preview'}
       </button>
       {#if permalink}
         <a class="action-link" href={permalink}>View live post</a>
