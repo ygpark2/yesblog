@@ -98,3 +98,30 @@ spec = withApp $ do
             remainingComments <- runDB $ selectList [CommentArticle ==. articleId] []
             assertEq "remaining tags" (length remainingTags) 0
             assertEq "remaining comments" (length remainingComments) 0
+
+        it "allows writer pro accounts to publish members-only posts" $ do
+            writerEntity@(Entity writerId _) <- createUser "members-writer"
+            now <- liftIO getCurrentTime
+            runDB $ update writerId
+                [ UserPlan =. "writer-pro"
+                , UserPlanExpiresAt =. Nothing
+                ]
+            authenticateAs writerEntity
+
+            request $ do
+                setMethod "POST"
+                setUrl ApiEditorSaveR
+                addPostParam "title" "Members Dispatch"
+                addPostParam "content" "Paid readers only"
+                addPostParam "slug" "members-dispatch"
+                addPostParam "draft" "false"
+                addPostParam "visibility" "members"
+
+            statusIs 200
+
+            savedArticle <- runDB $ getBy $ UniqueSlug "members-dispatch"
+            case savedArticle of
+                Nothing -> liftIO $ expectationFailure "expected members-only article to be saved"
+                Just (Entity _ article) -> do
+                    assertEq "saved visibility" (articleVisibility article) "members"
+                    assertEq "saved updated time still present" (articleUpdatedAt article >= now) True

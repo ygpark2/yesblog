@@ -123,6 +123,7 @@ $doctype 5
     isAuthorized (ApiCommentUpdateR _) _ = isAuthenticated
     isAuthorized (ApiCommentDeleteR _) _ = isAuthenticated
     isAuthorized (ApiUserR _) _ = return Authorized
+    isAuthorized (ApiUserMembershipR _) _ = isAuthenticated
     isAuthorized ApiAuthLoginR _ = return Authorized
     isAuthorized ApiAuthRegisterR _ = return Authorized
     isAuthorized ApiAuthLogoutR _ = return Authorized
@@ -131,6 +132,10 @@ $doctype 5
     isAuthorized ApiMeUpdateR _ = isAuthenticated
     isAuthorized ApiMePlanR _ = isAuthenticated
     isAuthorized ApiMeDomainsR _ = isAuthenticated
+    isAuthorized ApiMeMembershipsR _ = isAuthenticated
+    isAuthorized ApiMeMembershipOrdersR _ = isAuthenticated
+    isAuthorized (ApiMeMembershipOrderUpdateR _) _ = isAuthenticated
+    isAuthorized (ApiMeMembershipUpdateR _) _ = isAuthenticated
     isAuthorized ApiMeThemeR _ = isAuthenticated
     isAuthorized ApiMeThemesR _ = isAuthenticated
     isAuthorized ApiMeThemeOrdersR _ = isAuthenticated
@@ -145,9 +150,10 @@ $doctype 5
     isAuthorized (ApiThemeReviewUpsertR _) _ = isAuthenticated
     isAuthorized (ApiThemeReportR _) _ = isAuthenticated
     isAuthorized (ApiThemePurchaseR _) _ = isAuthenticated
-    isAuthorized (ApiThemePurchaseConfirmR _) _ = isAuthenticated
+    isAuthorized (ApiThemePurchaseConfirmR _) _ = isAdminUser
     isAuthorized (ApiThemeForkR _) _ = isAuthenticated
     isAuthorized ApiAdminDashboardR _ = isAdminUser
+    isAuthorized ApiAdminMembershipOrdersR _ = isAdminUser
     isAuthorized ApiAdminThemeOrdersR _ = isAdminUser
     isAuthorized ApiAdminThemePayoutsR _ = isAdminUser
     isAuthorized ApiAdminThemeReviewR _ = isAdminUser
@@ -161,6 +167,7 @@ $doctype 5
     isAuthorized (ApiAdminArticleDeleteR _) _ = isAdminUser
     isAuthorized (ApiAdminCommentDeleteR _) _ = isAdminUser
     isAuthorized (ApiAdminUserDeleteR _) _ = isAdminUser
+    isAuthorized (ApiAdminMembershipOrderUpdateR _) _ = isAdminUser
     isAuthorized ApiEditorBootstrapR _ = isAuthenticated
     isAuthorized ApiEditorMineR _ = isAuthenticated
     isAuthorized (ApiEditorArticleR _) _ = isAuthenticated

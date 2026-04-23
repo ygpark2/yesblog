@@ -101,23 +101,7 @@
     }
     const data: { requiresConfirmation?: boolean } = await response.json();
     if (data.requiresConfirmation) {
-      const shouldPay = window.confirm('Simulate payment success for this order?');
-      const confirmPayload = new URLSearchParams({
-        status: shouldPay ? 'paid' : 'failed'
-      });
-      const confirmResponse = await fetch(`${backendBaseUrl}/api/theme/${themeId}/purchase/confirm`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-        },
-        body: confirmPayload.toString()
-      });
-      if (!confirmResponse.ok) {
-        status = await readErrorMessage(confirmResponse, 'Payment confirmation failed.');
-        return;
-      }
-      status = shouldPay ? 'Payment recorded and theme added to your library.' : 'Order marked as failed.';
+      status = 'Order created. Payment must be verified by an administrator before the theme is unlocked.';
     }
     await fetchMarketplace();
   }

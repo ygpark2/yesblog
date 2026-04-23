@@ -7,6 +7,7 @@
     AdminThemePayoutSeller,
     AdminThemePayoutsResponse,
     ApiTheme,
+    MembershipOrderItem,
     ThemeOrderItem,
     ThemePayoutRequestItem,
     ThemeReviewItem
@@ -14,7 +15,7 @@
 
   const backendBaseUrl = env.PUBLIC_YESBLOG_API_BASE_URL || '';
 
-  type AdminSection = 'overview' | 'articles' | 'comments' | 'users' | 'themes' | 'theme-review' | 'theme-orders' | 'theme-payouts';
+  type AdminSection = 'overview' | 'articles' | 'comments' | 'users' | 'themes' | 'theme-review' | 'theme-orders' | 'theme-payouts' | 'membership-orders';
 
   interface Props {
     section: AdminSection;
@@ -30,9 +31,10 @@
     themes: 'Theme management',
     'theme-review': 'Theme review queue',
     'theme-orders': 'Theme order management',
-    'theme-payouts': 'Theme payout management'
+    'theme-payouts': 'Theme payout management',
+    'membership-orders': 'Membership order management'
   };
-  const managedAdminQueryKeys = ['theme', 'review', 'order', 'payout'] as const;
+  const managedAdminQueryKeys = ['theme', 'review', 'order', 'membershipOrder', 'payout'] as const;
   const sectionQueryKeys: Record<AdminSection, string[]> = {
     overview: ['theme'],
     articles: [],
@@ -41,7 +43,8 @@
     themes: ['theme'],
     'theme-review': ['review'],
     'theme-orders': ['order'],
-    'theme-payouts': ['payout']
+    'theme-payouts': ['payout'],
+    'membership-orders': ['membershipOrder']
   };
   const headerTemplatePlaceholder = '<header><h1>{{post.title}}</h1></header>';
   const bodyTemplatePlaceholder = '<article>{{post.content}}</article>';
@@ -52,10 +55,13 @@
   let selectedThemeId = $state<number | null>(null);
   let reviews = $state<ThemeReviewItem[]>([]);
   let orders = $state<ThemeOrderItem[]>([]);
+  let membershipOrders = $state<MembershipOrderItem[]>([]);
+  let membershipOrderFilter = $state<'all' | 'initial' | 'renewal'>('all');
   let payouts = $state<ThemePayoutRequestItem[]>([]);
   let payoutSellers = $state<AdminThemePayoutSeller[]>([]);
   let selectedReviewId = $state<number | null>(null);
   let selectedOrderId = $state<number | null>(null);
+  let selectedMembershipOrderId = $state<number | null>(null);
   let selectedPayoutId = $state<number | null>(null);
   let payoutSummary = $state({
     requestCount: 0,
@@ -202,6 +208,36 @@
     orders = data.items;
     syncSelectedOrderFromUrl();
     status = `${orders.length} theme orders loaded.`;
+  }
+
+  async function fetchMembershipOrders() {
+    const response = await fetch(`${backendBaseUrl}/api/admin/membership/orders`, {
+      credentials: 'include'
+    });
+
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response, 'Failed to load membership orders.'));
+    }
+
+    const data: { items: MembershipOrderItem[] } = await response.json();
+    membershipOrders = data.items;
+    syncSelectedMembershipOrderFromUrl();
+    status = `${membershipOrders.length} membership orders loaded.`;
+  }
+
+  function updateSelectedMembershipOrderInUrl(orderId: number | null) {
+    const url = new URL(window.location.href);
+    if (orderId === null) {
+      url.searchParams.delete('membershipOrder');
+    } else {
+      url.searchParams.set('membershipOrder', String(orderId));
+    }
+    window.history.replaceState(window.history.state, '', url);
+  }
+
+  function setSelectedMembershipOrder(orderId: number | null) {
+    selectedMembershipOrderId = orderId;
+    updateSelectedMembershipOrderInUrl(orderId);
   }
 
   function updateSelectedReviewInUrl(reviewId: number | null) {
@@ -596,6 +632,90 @@
     await fetchThemeOrders();
   }
 
+  async function updateMembershipOrder(orderId: number, nextStatus: string) {
+    status = `Updating membership order to ${nextStatus}...`;
+    const promptLabel =
+      nextStatus === 'failed' || nextStatus === 'cancelled'
+        ? 'Failure or cancellation note (required)'
+        : 'Admin note (optional)';
+    const note = (window.prompt(promptLabel, '') ?? '').trim();
+    if ((nextStatus === 'failed' || nextStatus === 'cancelled') && !note) {
+      status = 'Failure or cancellation note is required.';
+      return;
+    }
+    const payload = new URLSearchParams({ status: nextStatus, note });
+    const response = await fetch(`${backendBaseUrl}/api/admin/membership/order/${orderId}/update`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+      },
+      body: payload.toString()
+    });
+    if (!response.ok) {
+      status = await readErrorMessage(response, 'Membership order update failed.');
+      return;
+    }
+    await fetchMembershipOrders();
+  }
+
+  function filteredMembershipOrders() {
+    if (membershipOrderFilter === 'all') {
+      return membershipOrders;
+    }
+    if (membershipOrderFilter === 'renewal') {
+      return membershipOrders.filter((order) => order.provider === 'membership-renewal');
+    }
+    return membershipOrders.filter((order) => order.provider !== 'membership-renewal');
+  }
+
+  function syncSelectedMembershipOrderFromUrl() {
+    const visibleOrders = filteredMembershipOrders();
+    const orderParam = new URL(window.location.href).searchParams.get('membershipOrder');
+    const requestedId = orderParam ? Number(orderParam) : null;
+    const matchedOrder =
+      requestedId !== null && Number.isFinite(requestedId)
+        ? visibleOrders.find((order) => order.id === requestedId)
+        : null;
+    if (matchedOrder) {
+      selectedMembershipOrderId = matchedOrder.id;
+    } else if (visibleOrders.length > 0) {
+      setSelectedMembershipOrder(visibleOrders[0].id);
+    } else {
+      setSelectedMembershipOrder(null);
+    }
+  }
+
+  function selectedMembershipOrder() {
+    return filteredMembershipOrders().find((order) => order.id === selectedMembershipOrderId) ?? null;
+  }
+
+  function isSelectedMembershipOrder(orderId: number) {
+    return selectedMembershipOrderId === orderId;
+  }
+
+  function selectedMembershipOrderIndex() {
+    return filteredMembershipOrders().findIndex((order) => order.id === selectedMembershipOrderId);
+  }
+
+  function selectAdjacentMembershipOrder(direction: -1 | 1) {
+    const visibleOrders = filteredMembershipOrders();
+    const nextIndex = selectedMembershipOrderIndex() + direction;
+    if (nextIndex >= 0 && nextIndex < visibleOrders.length) {
+      setSelectedMembershipOrder(visibleOrders[nextIndex].id);
+    }
+  }
+
+  async function copySelectedMembershipOrderLink() {
+    if (!selectedMembershipOrderId) return;
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      status = 'Membership order link copied.';
+    } catch {
+      status = 'Could not copy the membership order link.';
+    }
+  }
+
   async function updatePayout(payoutId: number, nextStatus: string) {
     status = `Updating payout to ${nextStatus}...`;
     const promptLabel = nextStatus === 'rejected' ? 'Rejection note (required)' : 'Admin note (optional)';
@@ -646,6 +766,9 @@
     if (section === 'theme-orders' && orders.length > 0) {
       syncSelectedOrderFromUrl();
     }
+    if (section === 'membership-orders') {
+      syncSelectedMembershipOrderFromUrl();
+    }
     if (section === 'theme-payouts' && payouts.length > 0) {
       syncSelectedPayoutFromUrl();
     }
@@ -655,6 +778,13 @@
     section;
     normalizeAdminQueryForSection();
     syncSelectionForCurrentSection();
+  });
+
+  $effect(() => {
+    membershipOrderFilter;
+    if (section === 'membership-orders') {
+      syncSelectedMembershipOrderFromUrl();
+    }
   });
 
   onMount(() => {
@@ -667,6 +797,9 @@
       }
       if (section === 'theme-orders') {
         syncSelectedOrderFromUrl();
+      }
+      if (section === 'membership-orders') {
+        syncSelectedMembershipOrderFromUrl();
       }
       if (section === 'theme-payouts') {
         syncSelectedPayoutFromUrl();
@@ -682,10 +815,13 @@
         if (section === 'theme-orders') {
           await fetchThemeOrders();
         }
-        if (section === 'theme-payouts') {
-          await fetchThemePayouts();
-        }
-      } catch (error) {
+      if (section === 'theme-payouts') {
+        await fetchThemePayouts();
+      }
+      if (section === 'membership-orders') {
+        await fetchMembershipOrders();
+      }
+    } catch (error) {
         status = error instanceof Error ? error.message : 'Open an admin session first.';
       } finally {
         loading = false;
@@ -740,6 +876,10 @@
       <a class:admin-menu-item-active={section === 'theme-payouts'} class="admin-menu-item" href={`${base}/admin/themes/payouts`}>
         <span>Theme Payouts</span>
         <small>{payouts.length}</small>
+      </a>
+      <a class:admin-menu-item-active={section === 'membership-orders'} class="admin-menu-item" href={`${base}/admin/memberships/orders`}>
+        <span>Membership Orders</span>
+        <small>{membershipOrders.length}</small>
       </a>
     </nav>
 
@@ -1072,6 +1212,130 @@
                 <p>Created</p>
               </article>
             </div>
+          {/if}
+        </section>
+        {/if}
+
+        {#if section === 'membership-orders'}
+        <section class="admin-panel admin-panel-wide">
+          <div class="admin-section-head">
+            <div>
+              <p class="admin-kicker">Membership billing</p>
+              <h2>Membership payment orders</h2>
+            </div>
+            <div class="admin-actions">
+              <label>
+                <span class="sr-only">Membership order filter</span>
+                <select bind:value={membershipOrderFilter}>
+                  <option value="all">All</option>
+                  <option value="initial">Initial only</option>
+                  <option value="renewal">Renewals only</option>
+                </select>
+              </label>
+              <span>{filteredMembershipOrders().length} orders</span>
+            </div>
+          </div>
+
+          <div class="admin-list">
+            {#each filteredMembershipOrders() as order}
+              <article class:admin-list-card-selected={isSelectedMembershipOrder(order.id)} class="admin-list-card">
+                <div class="admin-list-title">
+                  <strong>{order.creator?.displayName ?? order.creator?.ident ?? 'Unknown writer'}</strong>
+                  <span class:admin-badge-live={order.status === 'paid'} class="admin-badge">{order.status}</span>
+                </div>
+                <p class="admin-copy">
+                  {(order.member?.displayName ?? order.member?.ident ?? 'Unknown member')} · ${(order.amountCents / 100).toFixed(2)}
+                </p>
+                <p class="admin-copy">{order.provider === 'membership-renewal' ? 'Renewal billing' : 'Initial membership payment'}</p>
+                <p class="admin-copy">{new Date(order.createdAt).toLocaleString()}</p>
+                {#if order.membership}
+                  <p class="admin-copy">Membership status: {order.membership.status}</p>
+                {/if}
+                {#if order.adminNote}
+                  <p class="admin-copy">Admin note: {order.adminNote}</p>
+                {/if}
+                <div class="admin-actions">
+                  <button
+                    type="button"
+                    class:admin-action-active={isSelectedMembershipOrder(order.id)}
+                    aria-pressed={isSelectedMembershipOrder(order.id)}
+                    onclick={() => setSelectedMembershipOrder(order.id)}
+                  >
+                    View details
+                  </button>
+                  <button type="button" onclick={() => updateMembershipOrder(order.id, 'pending')}>Mark pending</button>
+                  <button type="button" onclick={() => updateMembershipOrder(order.id, 'paid')}>Mark paid</button>
+                  <button type="button" onclick={() => updateMembershipOrder(order.id, 'failed')}>Mark failed</button>
+                  <button type="button" onclick={() => updateMembershipOrder(order.id, 'cancelled')}>Cancel</button>
+                </div>
+              </article>
+            {/each}
+          </div>
+
+          {#if selectedMembershipOrder()}
+            <div class="admin-section-head">
+              <div>
+                <p class="admin-kicker">Details</p>
+                <h2>Selected membership order</h2>
+              </div>
+              <div class="admin-actions">
+                <span>{selectedMembershipOrder()?.status}</span>
+                <button
+                  type="button"
+                  onclick={() => selectAdjacentMembershipOrder(-1)}
+                  disabled={selectedMembershipOrderIndex() <= 0}
+                >
+                  Prev
+                </button>
+                <button
+                  type="button"
+                  onclick={() => selectAdjacentMembershipOrder(1)}
+                  disabled={selectedMembershipOrderIndex() === -1 || selectedMembershipOrderIndex() >= filteredMembershipOrders().length - 1}
+                >
+                  Next
+                </button>
+                <button type="button" onclick={() => copySelectedMembershipOrderLink()}>Copy link</button>
+              </div>
+            </div>
+
+            <div class="admin-metrics" aria-label="Selected membership order">
+              <article>
+                <span>{selectedMembershipOrder()?.creator?.displayName ?? selectedMembershipOrder()?.creator?.ident ?? 'Unknown writer'}</span>
+                <p>Writer</p>
+              </article>
+              <article>
+                <span>{selectedMembershipOrder()?.member?.displayName ?? selectedMembershipOrder()?.member?.ident ?? 'Unknown member'}</span>
+                <p>Member</p>
+              </article>
+              <article>
+                <span>{selectedMembershipOrder()?.provider === 'membership-renewal' ? 'Renewal' : 'Initial'}</span>
+                <p>Billing type</p>
+              </article>
+              <article>
+                <span>${(((selectedMembershipOrder()?.amountCents ?? 0) / 100).toFixed(2))}</span>
+                <p>Amount</p>
+              </article>
+              <article>
+                <span>{selectedMembershipOrder()?.createdAt ? new Date(selectedMembershipOrder()!.createdAt).toLocaleDateString() : '-'}</span>
+                <p>Created</p>
+              </article>
+            </div>
+
+            {#if selectedMembershipOrder()?.membership || selectedMembershipOrder()?.adminNote}
+              <article class="admin-list-card">
+                <strong>Order context</strong>
+                {#if selectedMembershipOrder()?.membership}
+                  <p class="admin-copy">Membership status: {selectedMembershipOrder()?.membership?.status}</p>
+                  {#if selectedMembershipOrder()?.membership?.expiresAt}
+                    <p class="admin-copy">Expires: {new Date(selectedMembershipOrder()!.membership!.expiresAt!).toLocaleString()}</p>
+                  {/if}
+                  <p class="admin-copy">Auto renew: {selectedMembershipOrder()?.membership?.autoRenew ? 'on' : 'off'}</p>
+                {/if}
+                {#if selectedMembershipOrder()?.adminNote}
+                  <p class="admin-copy">Admin note: {selectedMembershipOrder()?.adminNote}</p>
+                {/if}
+              </article>
+            {/if}
           {/if}
         </section>
         {/if}

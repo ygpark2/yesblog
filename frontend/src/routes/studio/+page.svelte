@@ -826,7 +826,7 @@
           <input class="search-input studio-input" type="datetime-local" bind:value={publishAt} />
         </label>
       </div>
-      <p class="copy studio-field-note">Private, members-only, and scheduled publishing require Writer Pro.</p>
+      <p class="copy studio-field-note">Private, members-only visibility, and scheduled publishing require Writer Pro.</p>
 
       <label class="stack" style="gap: 8px;">
         <span class="eyebrow">Content</span>

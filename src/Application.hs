@@ -130,6 +130,8 @@ ensureExistingSqliteSchema = do
     ensureThemeRatingTable
     ensureThemeReportTable
     ensureCustomDomainTable
+    ensureMembershipTable
+    ensureMembershipOrderTable
     ensureUserThemeColumns
     ensureUserPlanColumns
 
@@ -244,6 +246,29 @@ ensureCustomDomainTable =
         "CREATE TABLE IF NOT EXISTS custom_domain (id INTEGER PRIMARY KEY, user INTEGER NOT NULL REFERENCES \"user\"(id), domain VARCHAR NOT NULL, verification_token VARCHAR NOT NULL, status VARCHAR NOT NULL DEFAULT 'pending', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT unique_custom_domain UNIQUE (domain))"
         []
 
+ensureMembershipTable :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureMembershipTable =
+    do
+        rawExecute
+            "CREATE TABLE IF NOT EXISTS membership (id INTEGER PRIMARY KEY, creator INTEGER NOT NULL REFERENCES \"user\"(id), member INTEGER NOT NULL REFERENCES \"user\"(id), price_cents INTEGER NOT NULL DEFAULT 0, status VARCHAR NOT NULL DEFAULT 'pending', auto_renew BOOLEAN NOT NULL DEFAULT 0, started_at TIMESTAMP NULL, expires_at TIMESTAMP NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT unique_membership UNIQUE (creator, member))"
+            []
+        columnNames <- fmap unSingle <$> (rawSql
+            "SELECT name FROM pragma_table_info('membership') ORDER BY cid"
+            [] :: ReaderT SqlBackend m [Single Text])
+        unless ("auto_renew" `elem` columnNames) $
+            rawExecute "ALTER TABLE membership ADD COLUMN auto_renew BOOLEAN NOT NULL DEFAULT 0" []
+
+ensureMembershipOrderTable :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureMembershipOrderTable = do
+    rawExecute
+        "CREATE TABLE IF NOT EXISTS membership_order (id INTEGER PRIMARY KEY, membership INTEGER NOT NULL REFERENCES membership(id), creator INTEGER NOT NULL REFERENCES \"user\"(id), member INTEGER NOT NULL REFERENCES \"user\"(id), amount_cents INTEGER NOT NULL DEFAULT 0, status VARCHAR NOT NULL DEFAULT 'pending', provider VARCHAR NULL, provider_order_id VARCHAR NULL, admin_note TEXT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, paid_at TIMESTAMP NULL)"
+        []
+    columnNames <- fmap unSingle <$> (rawSql
+        "SELECT name FROM pragma_table_info('membership_order') ORDER BY cid"
+        [] :: ReaderT SqlBackend m [Single Text])
+    unless ("admin_note" `elem` columnNames) $
+        rawExecute "ALTER TABLE membership_order ADD COLUMN admin_note TEXT NULL" []
+
 ensureUserThemeColumns :: forall m. MonadIO m => ReaderT SqlBackend m ()
 ensureUserThemeColumns = do
     columnNames <- fmap unSingle <$> (rawSql
@@ -263,6 +288,8 @@ ensureUserPlanColumns = do
         rawExecute "ALTER TABLE \"user\" ADD COLUMN plan VARCHAR NOT NULL DEFAULT 'free'" []
     unless ("plan_expires_at" `elem` columnNames) $
         rawExecute "ALTER TABLE \"user\" ADD COLUMN plan_expires_at TIMESTAMP NULL" []
+    unless ("membership_price_cents" `elem` columnNames) $
+        rawExecute "ALTER TABLE \"user\" ADD COLUMN membership_price_cents INTEGER NOT NULL DEFAULT 0" []
 
 seedDefaultThemes :: ConnectionPool -> IO ()
 seedDefaultThemes pool = do
@@ -356,6 +383,7 @@ seedAdminAccount settings pool = do
                 , userIsAdmin = True
                 , userPlan = "designer-pro"
                 , userPlanExpiresAt = Nothing
+                , userMembershipPriceCents = 0
                 , userTheme = Nothing
                 , userThemeOverrides = Nothing
                 }

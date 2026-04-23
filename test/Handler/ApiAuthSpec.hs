@@ -86,3 +86,15 @@ spec = withApp $ do
 
             statusIs 400
             bodyContains "Invalid username or password."
+
+        it "blocks self-service plan upgrades" $ do
+            userEntity <- createUser "plan-member"
+            authenticateAs userEntity
+
+            request $ do
+                setMethod "POST"
+                setUrl ApiMePlanR
+                addPostParam "plan" "writer-pro"
+
+            statusIs 400
+            bodyContains "not self-service"

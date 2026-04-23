@@ -1,5 +1,5 @@
 import { apiFetch } from '$lib/api';
-import type { ApiPostSummary, ApiUser } from '$lib/types';
+import type { ApiPostSummary, ApiUser, MembershipAccess } from '$lib/types';
 
 type UserResponse = {
   user: ApiUser;
@@ -7,6 +7,7 @@ type UserResponse = {
   meta: {
     publishedCount: number;
   };
+  membership: MembershipAccess;
 };
 
 export async function load({ fetch, params }) {

@@ -9,10 +9,37 @@ User
     isAdmin Bool default=0
     plan Text default='free'
     planExpiresAt UTCTime Maybe
+    membershipPriceCents Int default=0
     theme ThemeId Maybe
     themeOverrides Text Maybe
     UniqueUser ident
     deriving Typeable
+
+Membership
+    creator UserId
+    member UserId
+    priceCents Int default=0
+    status Text default='pending'
+    autoRenew Bool default=0
+    startedAt UTCTime Maybe
+    expiresAt UTCTime Maybe
+    createdAt UTCTime default=CURRENT_TIMESTAMP
+    updatedAt UTCTime default=CURRENT_TIMESTAMP
+    UniqueMembership creator member
+    deriving Show
+
+MembershipOrder
+    membership MembershipId
+    creator UserId
+    member UserId
+    amountCents Int default=0
+    status Text default='pending'
+    provider Text Maybe
+    providerOrderId Text Maybe
+    adminNote Textarea Maybe
+    createdAt UTCTime default=CURRENT_TIMESTAMP
+    paidAt UTCTime Maybe
+    deriving Show
 
 Theme
     name Text

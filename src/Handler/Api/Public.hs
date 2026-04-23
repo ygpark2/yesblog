@@ -39,9 +39,8 @@ getApiPostR slug = do
     Entity articleId article <- runDB $ getBy404 $ UniqueSlug slug
     mviewer <- maybeAuth
     now <- liftIO getCurrentTime
-    let mViewerId = entityKey <$> mviewer
-        isAdminViewer = maybe False (userIsAdmin . entityVal) mviewer
-    when (articleDraft article || not (isArticleVisibleToViewer now mViewerId isAdminViewer article)) notFound
+    visibleToViewer <- canViewerAccessArticle now mviewer article
+    when (articleDraft article || not visibleToViewer) notFound
     author <- runDB $ get404 $ articleAuthor article
     authorTheme <- loadUserTheme author
     tags <- runDB $ map (tagName . entityVal) <$> selectList [TagArticle ==. articleId] [Asc TagName]
@@ -52,7 +51,7 @@ getApiPostR slug = do
         , ArticleAuthor ==. articleAuthor article
         ]
         [Desc ArticleUpdatedAt, LimitTo 3]
-    let visibleRelatedArticles = filter (isArticleVisibleToViewer now mViewerId isAdminViewer . entityVal) relatedArticles
+    visibleRelatedArticles <- filterM (canViewerAccessArticle now mviewer . entityVal) relatedArticles
     relatedTags <- loadTagMap (map entityKey visibleRelatedArticles)
     relatedAuthors <- loadAuthorMap visibleRelatedArticles
     returnJson $ object
@@ -67,9 +66,8 @@ postApiPostCommentR slug = do
     rawContent <- runInputPost $ fromMaybe "" <$> iopt textField "content"
     muser <- maybeAuth
     now <- liftIO getCurrentTime
-    let mViewerId = entityKey <$> muser
-        isAdminViewer = maybe False (userIsAdmin . entityVal) muser
-    when (articleDraft article || not (isArticleVisibleToViewer now mViewerId isAdminViewer article)) notFound
+    visibleToViewer <- canViewerAccessArticle now muser article
+    when (articleDraft article || not visibleToViewer) notFound
     enforceCommentCooldown now
     let normalizedContent = T.strip rawContent
         fallbackName = maybe "Anonymous" (\entity -> userIdent (entityVal entity)) muser
@@ -102,14 +100,39 @@ postApiCommentDeleteR commentId = do
 getApiUserR :: Text -> Handler Value
 getApiUserR ident = do
     Entity userId user <- runDB $ getBy404 $ UniqueUser ident
+    mviewer <- maybeAuth
+    now <- liftIO getCurrentTime
     userTheme' <- loadUserTheme user
     articles <- runDB $ selectList [ArticleAuthor ==. userId, ArticleDraft !=. True] [Desc ArticleUpdatedAt]
-    now <- liftIO getCurrentTime
     let visibleArticles = filter (isArticlePubliclyVisible now . entityVal) articles
     articleTags <- loadTagMap (map entityKey visibleArticles)
     authors <- loadAuthorMap visibleArticles
+    mMembership <- case mviewer of
+        Just (Entity viewerId _) | viewerId /= userId -> lookupMembershipFor now userId viewerId
+        _ -> pure Nothing
     returnJson $ object
         [ "user" .= userValueWithTheme user userTheme'
         , "items" .= map (articleSummaryValue articleTags authors) visibleArticles
         , "meta" .= object ["publishedCount" .= length visibleArticles]
+        , "membership" .= membershipAccessValue user mMembership now
         ]
+
+canViewerAccessArticle :: UTCTime -> Maybe (Entity User) -> Article -> Handler Bool
+canViewerAccessArticle now mviewer article
+    | maybe False (userIsAdmin . entityVal) mviewer = pure True
+    | maybe False ((== articleAuthor article) . entityKey) mviewer = pure True
+    | otherwise =
+        case articleVisibility article of
+            "private" -> pure False
+            "members" ->
+                case mviewer of
+                    Just (Entity viewerId _) -> do
+                        membershipActive <- hasActiveMembershipFor now (articleAuthor article) viewerId
+                        pure $ membershipActive && scheduledOk
+                    Nothing -> pure False
+            _ -> pure scheduledOk
+  where
+    scheduledOk =
+        case articlePublishAt article of
+            Nothing -> True
+            Just publishAt -> publishAt <= now

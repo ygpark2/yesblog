@@ -14,6 +14,7 @@
 /api/comment/#CommentId/update ApiCommentUpdateR POST
 /api/comment/#CommentId/delete ApiCommentDeleteR POST
 /api/user/#Text             ApiUserR       GET
+/api/user/#Text/membership  ApiUserMembershipR POST
 /api/auth/login             ApiAuthLoginR  POST
 /api/auth/register          ApiAuthRegisterR POST
 /api/auth/logout            ApiAuthLogoutR POST
@@ -22,6 +23,10 @@
 /api/me/update             ApiMeUpdateR   POST
 /api/me/plan               ApiMePlanR     POST
 /api/me/domains            ApiMeDomainsR  GET POST
+/api/me/memberships        ApiMeMembershipsR GET
+/api/me/membership/orders  ApiMeMembershipOrdersR GET
+/api/me/membership/order/#MembershipOrderId/update ApiMeMembershipOrderUpdateR POST
+/api/me/membership/#MembershipId/update ApiMeMembershipUpdateR POST
 /api/me/theme              ApiMeThemeR    POST
 /api/me/themes             ApiMeThemesR   GET
 /api/me/theme/orders       ApiMeThemeOrdersR GET
@@ -39,6 +44,7 @@
 /api/theme/#ThemeId/purchase/confirm ApiThemePurchaseConfirmR POST
 /api/theme/#ThemeId/fork   ApiThemeForkR  POST
 /api/admin/dashboard       ApiAdminDashboardR GET
+/api/admin/membership/orders ApiAdminMembershipOrdersR GET
 /api/admin/theme/orders    ApiAdminThemeOrdersR GET
 /api/admin/theme/payouts   ApiAdminThemePayoutsR GET
 /api/admin/themes/review   ApiAdminThemeReviewR GET
@@ -52,6 +58,7 @@
 /api/admin/article/#ArticleId/delete ApiAdminArticleDeleteR POST
 /api/admin/comment/#CommentId/delete ApiAdminCommentDeleteR POST
 /api/admin/user/#UserId/delete ApiAdminUserDeleteR POST
+/api/admin/membership/order/#MembershipOrderId/update ApiAdminMembershipOrderUpdateR POST
 /api/editor/bootstrap       ApiEditorBootstrapR GET
 /api/editor/mine            ApiEditorMineR GET
 /api/editor/article/#ArticleId ApiEditorArticleR GET

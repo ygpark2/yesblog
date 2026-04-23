@@ -7,16 +7,6 @@
   let items = $state<ThemeOrderItem[]>([]);
   let status = $state('Loading order history...');
 
-  async function readErrorMessage(response: Response, fallback: string) {
-    try {
-      const payload = await response.json();
-      if (typeof payload?.message === 'string' && payload.message.trim()) return payload.message;
-    } catch {
-      return fallback;
-    }
-    return fallback;
-  }
-
   async function fetchOrders() {
     const data = await apiFetch<{ items: ThemeOrderItem[] }>(fetch, '/api/me/theme/orders');
     items = data.items;
@@ -32,38 +22,6 @@
       }
     })();
   });
-
-  async function confirmOrder(themeId: number, nextStatus: 'paid' | 'cancelled') {
-    status = nextStatus === 'paid' ? 'Confirming payment...' : 'Cancelling order...';
-    const payload = new URLSearchParams({ status: nextStatus });
-    const response = await fetch(`/api/theme/${themeId}/purchase/confirm`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Order update failed.');
-      return;
-    }
-    await fetchOrders();
-  }
-
-  async function retryOrder(themeId: number) {
-    status = 'Creating retry order...';
-    const response = await fetch(`/api/theme/${themeId}/purchase`, {
-      method: 'POST',
-      credentials: 'include'
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Retry order failed.');
-      return;
-    }
-    const shouldPay = window.confirm('Simulate payment success for this retry order?');
-    await confirmOrder(themeId, shouldPay ? 'paid' : 'cancelled');
-  }
 </script>
 
 <section class="stack">
@@ -91,27 +49,11 @@
             {item.amountCents === 0 ? 'Free' : `$${(item.amountCents / 100).toFixed(2)}`} · {new Date(item.createdAt).toLocaleString()}
           </p>
           {#if item.status === 'pending'}
-            <p class="admin-copy">Waiting for payment confirmation.</p>
-            {#if item.theme}
-              <div class="admin-actions">
-                <button type="button" onclick={() => confirmOrder(item.theme!.id, 'paid')}>Complete payment</button>
-                <button type="button" onclick={() => confirmOrder(item.theme!.id, 'cancelled')}>Cancel order</button>
-              </div>
-            {/if}
+            <p class="admin-copy">Waiting for administrator payment verification.</p>
           {:else if item.status === 'failed'}
-            <p class="admin-copy">Payment was not completed for this order.</p>
-            {#if item.theme}
-              <div class="admin-actions">
-                <button type="button" onclick={() => retryOrder(item.theme!.id)}>Retry payment</button>
-              </div>
-            {/if}
+            <p class="admin-copy">Payment verification failed for this order.</p>
           {:else if item.status === 'cancelled'}
             <p class="admin-copy">This order was cancelled before payment completed.</p>
-            {#if item.theme}
-              <div class="admin-actions">
-                <button type="button" onclick={() => retryOrder(item.theme!.id)}>Retry payment</button>
-              </div>
-            {/if}
           {:else if item.paidAt}
             <p class="admin-copy">Paid at {new Date(item.paidAt).toLocaleString()}</p>
           {/if}

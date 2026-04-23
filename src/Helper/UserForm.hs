@@ -23,6 +23,7 @@ userForm html = do
       <*> pure isAdmin
       <*> pure (userPlan user)
       <*> pure (userPlanExpiresAt user)
+      <*> pure (userMembershipPriceCents user)
       <*> pure theme
       <*> pure themeOverrides
     )

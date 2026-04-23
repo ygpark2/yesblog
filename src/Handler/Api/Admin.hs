@@ -10,6 +10,7 @@ import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import qualified Data.Text.Read as TR
+import Data.Time (addUTCTime)
 
 getApiAdminDashboardR :: Handler Value
 getApiAdminDashboardR = do
@@ -64,6 +65,18 @@ getApiAdminThemeOrdersR = do
     userMap <- loadReviewerMap userIds
     returnJson $ object
         [ "items" .= map (themeOrderAdminValue themeMap userMap) orders
+        ]
+
+getApiAdminMembershipOrdersR :: Handler Value
+getApiAdminMembershipOrdersR = do
+    _ <- requireAdminAuth
+    orders <- runDB $ selectList [] [Desc MembershipOrderCreatedAt]
+    membershipMap <- loadMembershipMap $ map (membershipOrderMembership . entityVal) orders
+    userMap <- loadReviewerMap $
+        map (membershipOrderCreator . entityVal) orders <>
+        map (membershipOrderMember . entityVal) orders
+    returnJson $ object
+        [ "items" .= map (membershipOrderValue membershipMap userMap) orders
         ]
 
 getApiAdminThemePayoutsR :: Handler Value
@@ -251,6 +264,54 @@ postApiAdminThemeOrderUpdateR orderId = do
         [ "order" .= themeOrderAdminValue themeMap userMap updatedOrder
         ]
 
+postApiAdminMembershipOrderUpdateR :: MembershipOrderId -> Handler Value
+postApiAdminMembershipOrderUpdateR orderId = do
+    _ <- requireAdminAuth
+    desiredStatus <- normalizeMembershipOrderStatus <$> runInputPost (fromMaybe "pending" <$> iopt textField "status")
+    note <- T.strip <$> runInputPost (fromMaybe "" <$> iopt textField "note")
+    when (desiredStatus `elem` ["failed", "cancelled"] && note == "") $
+        apiError status400 "Failure or cancellation note is required."
+    now <- liftIO getCurrentTime
+    order <- runDB $ get404 orderId
+    let membershipId = membershipOrderMembership order
+        creatorId = membershipOrderCreator order
+        memberId = membershipOrderMember order
+        nextAdminNote =
+            if note == ""
+                then if desiredStatus `elem` ["pending", "paid"] then Nothing else membershipOrderAdminNote order
+                else normalizeOptionalTextarea (Just note)
+    runDB $ do
+        update orderId
+            [ MembershipOrderStatus =. desiredStatus
+            , MembershipOrderPaidAt =. if desiredStatus == "paid" then Just now else Nothing
+            , MembershipOrderAdminNote =. nextAdminNote
+            ]
+        case desiredStatus of
+            "paid" ->
+                update membershipId
+                    [ MembershipStatus =. "active"
+                    , MembershipStartedAt =. Just now
+                    , MembershipExpiresAt =. Just (addUTCTime (60 * 60 * 24 * 30) now)
+                    , MembershipUpdatedAt =. now
+                    ]
+            "failed" ->
+                update membershipId
+                    [ MembershipStatus =. "pending"
+                    , MembershipUpdatedAt =. now
+                    ]
+            "cancelled" ->
+                update membershipId
+                    [ MembershipStatus =. "cancelled"
+                    , MembershipUpdatedAt =. now
+                    ]
+            _ -> pure ()
+    updatedOrder <- Entity orderId <$> runDB (get404 orderId)
+    membershipMap <- loadMembershipMap [membershipId]
+    userMap <- loadReviewerMap [creatorId, memberId]
+    returnJson $ object
+        [ "order" .= membershipOrderValue membershipMap userMap updatedOrder
+        ]
+
 postApiAdminThemePayoutUpdateR :: ThemePayoutId -> Handler Value
 postApiAdminThemePayoutUpdateR payoutId = do
     _ <- requireAdminAuth
@@ -417,6 +478,20 @@ parseNonNegativeInt rawValue =
     case TR.decimal (T.strip rawValue) of
         Right (value, _) -> max 0 value
         Left _ -> 0
+
+normalizeMembershipOrderStatus :: Text -> Text
+normalizeMembershipOrderStatus rawStatus =
+    let status = T.toLower $ T.strip rawStatus
+    in if status `elem` ["pending", "paid", "failed", "cancelled"]
+        then status
+        else "pending"
+
+loadMembershipMap :: [MembershipId] -> Handler (M.Map MembershipId Membership)
+loadMembershipMap membershipIds
+    | null membershipIds = pure M.empty
+    | otherwise = do
+        memberships <- runDB $ selectList [MembershipId <-. L.nub membershipIds] []
+        pure $ M.fromList $ map (\(Entity membershipId membership) -> (membershipId, membership)) memberships
 
 postApiAdminArticleDeleteR :: ArticleId -> Handler Value
 postApiAdminArticleDeleteR articleId = do

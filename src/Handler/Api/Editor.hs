@@ -128,7 +128,7 @@ postApiEditorSaveR = do
         slugSource = if T.strip slugInput == "" then title else slugInput
         visibility = normalizeArticleVisibility visibilityInput
     publishAt <- parseOptionalPublishAt publishAtInput
-    when ((visibility /= "public" || isJust publishAt) && not (userHasWriterPro currentUser)) $
+    when ((visibility /= "public" || isJust publishAt) && not (userHasWriterProAt now currentUser)) $
         apiError status400 "Writer Pro is required for scheduling and member/private visibility."
     resolvedSlug <- ensureUniqueSlug mArticleId slugSource
     articleId <- case mArticleId of
@@ -174,7 +174,7 @@ postApiEditorAutosaveR = do
         slugSource = if T.strip slugInput == "" then title else slugInput
         visibility = normalizeArticleVisibility visibilityInput
     publishAt <- parseOptionalPublishAt publishAtInput
-    when ((visibility /= "public" || isJust publishAt) && not (userHasWriterPro currentUser)) $
+    when ((visibility /= "public" || isJust publishAt) && not (userHasWriterProAt now currentUser)) $
         apiError status400 "Writer Pro is required for scheduling and member/private visibility."
     resolvedSlug <- ensureUniqueSlug mAutosaveArticleId slugSource
     articleId <- case mAutosaveArticleId of

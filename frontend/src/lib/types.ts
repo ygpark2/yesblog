@@ -159,9 +159,47 @@ export type ApiUser = {
   isAdmin?: boolean;
   plan?: string;
   planExpiresAt?: string | null;
+  membershipPriceCents?: number;
   themeId?: number | null;
   themeOverrides?: string | null;
   theme?: ApiTheme | null;
+};
+
+export type MembershipAccess = {
+  enabled: boolean;
+  priceCents: number;
+  viewerStatus?: string | null;
+  active: boolean;
+  startedAt?: string | null;
+  expiresAt?: string | null;
+};
+
+export type MembershipItem = {
+  id: number;
+  status: string;
+  priceCents: number;
+  autoRenew: boolean;
+  startedAt?: string | null;
+  expiresAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  creator?: ApiUser | null;
+  member?: ApiUser | null;
+};
+
+export type MembershipOrderItem = {
+  id: number;
+  amountCents: number;
+  status: string;
+  provider?: string | null;
+  providerOrderId?: string | null;
+  adminNote?: string | null;
+  createdAt: string;
+  paidAt?: string | null;
+  membershipId: number;
+  membership?: MembershipItem | null;
+  creator?: ApiUser | null;
+  member?: ApiUser | null;
 };
 
 export type CustomDomainItem = {
@@ -186,6 +224,11 @@ export type ApiMe = {
     draftCount: number;
     publishedCount: number;
   };
+};
+
+export type ApiMeMemberships = {
+  received: MembershipItem[];
+  outgoing: MembershipItem[];
 };
 
 export type AdminArticle = {

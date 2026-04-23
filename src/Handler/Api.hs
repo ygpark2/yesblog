@@ -71,6 +71,7 @@ postApiAuthRegisterR = do
                 , userIsAdmin = False
                 , userPlan = "free"
                 , userPlanExpiresAt = Nothing
+                , userMembershipPriceCents = 0
                 , userTheme = Nothing
                 , userThemeOverrides = Nothing
                 }
@@ -94,21 +95,25 @@ postApiAuthLogoutR = do
 getApiSessionR :: Handler Value
 getApiSessionR = do
     muser <- maybeAuth
+    now <- liftIO getCurrentTime
     returnJson $ object
-        [ "user" .= fmap (userValue . entityVal) muser
+        [ "user" .= fmap (\(Entity _ user) -> userValue user { userPlan = effectiveUserPlanAt now user }) muser
         , "authenticated" .= isJust muser
         ]
 
 getApiMeR :: Handler Value
 getApiMeR = do
     (userId, user) <- requireAuthPair
+    now <- liftIO getCurrentTime
+    let effectivePlan = effectiveUserPlanAt now user
+        effectiveUser = user { userPlan = effectivePlan }
     userTheme' <- loadUserTheme user
     domains <- runDB $ selectList [CustomDomainUser ==. userId] [Desc CustomDomainUpdatedAt]
     totalArticles <- runDB $ count [ArticleAuthor ==. userId]
     draftCount <- runDB $ count [ArticleAuthor ==. userId, ArticleDraft ==. True]
     publishedCount <- runDB $ count [ArticleAuthor ==. userId, ArticleDraft !=. True]
     returnJson $ object
-        [ "user" .= userValueWithTheme user userTheme'
+        [ "user" .= userValueWithTheme effectiveUser userTheme'
         , "domains" .= map customDomainValue domains
         , "meta" .= object
             [ "totalCount" .= totalArticles
@@ -122,13 +127,15 @@ postApiMePlanR = do
     (userId, user) <- requireAuthPair
     requestedPlan <- normalizeUserPlan <$> runInputPost (fromMaybe "free" <$> iopt textField "plan")
     now <- liftIO getCurrentTime
-    let expiresAt =
+    when (not (userIsAdmin user) && requestedPlan /= "free") $
+        apiError status400 "Plan upgrades are not self-service yet."
+    let nextExpiresAt =
             if requestedPlan == "free"
                 then Nothing
                 else Just $ addUTCTime (60 * 60 * 24 * 30) now
     runDB $ update userId
         [ UserPlan =. requestedPlan
-        , UserPlanExpiresAt =. expiresAt
+        , UserPlanExpiresAt =. nextExpiresAt
         ]
     updatedUser <- runDB $ get404 userId
     updatedTheme <- loadUserTheme updatedUser
@@ -143,14 +150,164 @@ getApiMeDomainsR = do
     domains <- runDB $ selectList [CustomDomainUser ==. userId] [Desc CustomDomainUpdatedAt]
     returnJson $ object ["items" .= map customDomainValue domains]
 
+getApiMeMembershipsR :: Handler Value
+getApiMeMembershipsR = do
+    (userId, user) <- requireAuthPair
+    refreshMembershipLifecycles userId
+    received <- runDB $ selectList [MembershipCreator ==. userId] [Desc MembershipUpdatedAt]
+    outgoing <- runDB $ selectList [MembershipMember ==. userId] [Desc MembershipUpdatedAt]
+    creatorMap <- loadUsersByIds $ map (membershipCreator . entityVal) outgoing
+    memberMap <- loadUsersByIds $ map (membershipMember . entityVal) received
+    returnJson $ object
+        [ "received" .= map (\entity -> membershipValue (Just user) (M.lookup (membershipMember $ entityVal entity) memberMap) entity) received
+        , "outgoing" .= map (\entity -> membershipValue (M.lookup (membershipCreator $ entityVal entity) creatorMap) (Just user) entity) outgoing
+        ]
+
+getApiMeMembershipOrdersR :: Handler Value
+getApiMeMembershipOrdersR = do
+    (userId, _user) <- requireAuthPair
+    refreshMembershipLifecycles userId
+    orders <- runDB $ selectList [MembershipOrderMember ==. userId] [Desc MembershipOrderCreatedAt]
+    membershipMap <- loadMembershipMap $ map (membershipOrderMembership . entityVal) orders
+    userMap <- loadUsersByIds $
+        map (membershipOrderCreator . entityVal) orders <>
+        map (membershipOrderMember . entityVal) orders
+    returnJson $ object
+        [ "items" .= map (membershipOrderValue membershipMap userMap) orders
+        ]
+
+postApiMeMembershipOrderUpdateR :: MembershipOrderId -> Handler Value
+postApiMeMembershipOrderUpdateR orderId = do
+    (userId, user) <- requireAuthPair
+    now <- liftIO getCurrentTime
+    mode <- T.toLower . T.strip <$> runInputPost (fromMaybe "" <$> iopt textField "mode")
+    order <- runDB $ get404 orderId
+    membership <- runDB $ get404 $ membershipOrderMembership order
+    let isMember = membershipOrderMember order == userId
+        isRenewal = membershipOrderProvider order == Just "membership-renewal"
+    when (not isMember && not (userIsAdmin user)) $
+        permissionDenied "You can only manage your own membership orders."
+    case mode of
+        "cancel" -> do
+            when (membershipOrderStatus order /= "pending") $
+                apiError status400 "Only pending membership orders can be cancelled."
+            runDB $ do
+                update orderId
+                    [ MembershipOrderStatus =. "cancelled"
+                    , MembershipOrderPaidAt =. Nothing
+                    , MembershipOrderAdminNote =. Nothing
+                    ]
+                when (membershipStatus membership == "pending") $
+                    update (membershipOrderMembership order)
+                        [ MembershipStatus =. if isRenewal then "expired" else "cancelled"
+                        , MembershipAutoRenew =. if isRenewal then False else membershipAutoRenew membership
+                        , MembershipExpiresAt =. if isRenewal then Just now else membershipExpiresAt membership
+                        , MembershipUpdatedAt =. now
+                        ]
+        "retry" -> do
+            when (membershipOrderStatus order `notElem` ["failed", "cancelled"]) $
+                apiError status400 "Only failed or cancelled membership orders can be retried."
+            runDB $ do
+                updateWhere
+                    [ MembershipOrderMembership ==. membershipOrderMembership order
+                    , MembershipOrderStatus ==. "pending"
+                    , MembershipOrderId !=. orderId
+                    ]
+                    [ MembershipOrderStatus =. "cancelled"
+                    , MembershipOrderPaidAt =. Nothing
+                    ]
+                update orderId
+                    [ MembershipOrderAmountCents =. membershipPriceCents membership
+                    , MembershipOrderStatus =. "pending"
+                    , MembershipOrderPaidAt =. Nothing
+                    , MembershipOrderAdminNote =. Nothing
+                    ]
+                update (membershipOrderMembership order)
+                    [ MembershipPriceCents =. membershipPriceCents membership
+                    , MembershipStatus =. "pending"
+                    , MembershipUpdatedAt =. now
+                    ]
+        _ ->
+            apiError status400 "Mode must be cancel or retry."
+    updatedOrder <- runDB $ get404 orderId
+    updatedMembership <- runDB $ get404 $ membershipOrderMembership order
+    creator <- runDB $ get404 $ membershipOrderCreator order
+    memberUser <- runDB $ get404 $ membershipOrderMember order
+    returnJson $ object
+        [ "order" .= membershipOrderValue (M.singleton (membershipOrderMembership order) updatedMembership) (M.fromList [(membershipOrderCreator order, creator), (membershipOrderMember order, memberUser)]) (Entity orderId updatedOrder)
+        , "membership" .= membershipValue (Just creator) (Just memberUser) (Entity (membershipOrderMembership order) updatedMembership)
+        ]
+
+postApiMeMembershipUpdateR :: MembershipId -> Handler Value
+postApiMeMembershipUpdateR membershipId = do
+    (userId, user) <- requireAuthPair
+    now <- liftIO getCurrentTime
+    statusInput <- T.toLower . T.strip <$> runInputPost (fromMaybe "" <$> iopt textField "status")
+    autoRenewInput <- runInputPost $ iopt textField "autoRenew"
+    membership <- runDB $ get404 membershipId
+    let isCreator = membershipCreator membership == userId
+        isMember = membershipMember membership == userId
+    when (not isCreator && not isMember && not (userIsAdmin user)) $
+        permissionDenied "You can only manage memberships tied to your account."
+    case fmap (T.toLower . T.strip) autoRenewInput of
+        Just rawAutoRenew -> do
+            unless (isMember || userIsAdmin user) $
+                permissionDenied "Only the subscriber can change auto-renew."
+            let nextAutoRenew = rawAutoRenew `elem` ["true", "1", "yes", "on"]
+            runDB $ update membershipId
+                [ MembershipAutoRenew =. nextAutoRenew
+                , MembershipUpdatedAt =. now
+                ]
+            creator <- runDB $ get404 $ membershipCreator membership
+            memberUser <- runDB $ get404 $ membershipMember membership
+            updatedMembership <- runDB $ get404 membershipId
+            returnJson $ object
+                [ "membership" .= membershipValue (Just creator) (Just memberUser) (Entity membershipId updatedMembership)
+                ]
+        Nothing -> do
+            when (not isCreator && not (userIsAdmin user)) $
+                permissionDenied "Only the writer can change membership status."
+            latestPaidOrder <- runDB $ selectFirst
+                [ MembershipOrderMembership ==. membershipId
+                , MembershipOrderStatus ==. "paid"
+                ]
+                [Desc MembershipOrderCreatedAt]
+            let nextStatus
+                    | statusInput `elem` ["active", "cancelled", "expired", "pending"] = statusInput
+                    | otherwise = "pending"
+            when (nextStatus == "active" && isNothing latestPaidOrder && not (userIsAdmin user)) $
+                apiError status400 "A paid membership order is required before activation."
+            let
+                nextStartedAt =
+                    if nextStatus == "active"
+                        then Just $ fromMaybe now (membershipStartedAt membership)
+                        else membershipStartedAt membership
+                nextExpiresAt =
+                    case nextStatus of
+                        "active" -> Just $ addUTCTime (60 * 60 * 24 * 30) now
+                        "expired" -> Just now
+                        _ -> membershipExpiresAt membership
+            runDB $ update membershipId
+                [ MembershipStatus =. nextStatus
+                , MembershipStartedAt =. nextStartedAt
+                , MembershipExpiresAt =. nextExpiresAt
+                , MembershipUpdatedAt =. now
+                ]
+            creator <- runDB $ get404 $ membershipCreator membership
+            member <- runDB $ get404 $ membershipMember membership
+            updatedMembership <- runDB $ get404 membershipId
+            returnJson $ object
+                [ "membership" .= membershipValue (Just creator) (Just member) (Entity membershipId updatedMembership)
+                ]
+
 postApiMeDomainsR :: Handler Value
 postApiMeDomainsR = do
     (userId, user) <- requireAuthPair
-    unless (userHasWriterPro user) $
+    now <- liftIO getCurrentTime
+    unless (userHasWriterProAt now user) $
         apiError status400 "Writer Pro is required for custom domains."
     domainInput <- T.toLower . T.strip <$> runInputPost (fromMaybe "" <$> iopt textField "domain")
     mode <- T.toLower . T.strip <$> runInputPost (fromMaybe "save" <$> iopt textField "mode")
-    now <- liftIO getCurrentTime
     case mode of
         "delete" -> do
             runDB $ deleteWhere [CustomDomainUser ==. userId]
@@ -187,17 +344,24 @@ postApiMeDomainsR = do
 
 postApiMeUpdateR :: Handler Value
 postApiMeUpdateR = do
-    (userId, _user) <- requireAuthPair
+    (userId, user) <- requireAuthPair
     ident <- runInputPost $ ireq textField "ident"
     rawDisplayName <- runInputPost $ fromMaybe "" <$> iopt textField "displayName"
     rawBio <- runInputPost $ fromMaybe "" <$> iopt textField "bio"
+    membershipPriceInput <- runInputPost $ fromMaybe (userMembershipPriceCents user) <$> iopt intField "membershipPriceCents"
     let trimmedIdent = T.strip ident
         trimmedDisplayName = T.strip rawDisplayName
         trimmedBio = T.strip rawBio
+        membershipPriceCents = max 0 membershipPriceInput
     when (trimmedIdent == "") $
         apiError status400 "Username is required."
     when (length trimmedIdent < 3) $
         apiError status400 "Username must be at least 3 characters."
+    now <- liftIO getCurrentTime
+    when (membershipPriceCents > 0 && not (userHasWriterProAt now user)) $
+        apiError status400 "Writer Pro is required to sell memberships."
+    when (membershipPriceCents > 5000000) $
+        apiError status400 "Membership price must stay within a reasonable range."
     existingUser <- runDB $ getBy $ UniqueUser trimmedIdent
     case existingUser of
         Just (Entity existingUserId _)
@@ -210,11 +374,97 @@ postApiMeUpdateR = do
             (if trimmedDisplayName == "" then Nothing else Just trimmedDisplayName)
         , UserBio =.
             (if trimmedBio == "" then Nothing else Just (Textarea trimmedBio))
+        , UserMembershipPriceCents =. membershipPriceCents
         ]
     updatedUser <- runDB $ get404 userId
     returnJson $ object
         [ "user" .= userValue updatedUser
         ]
+
+postApiUserMembershipR :: Text -> Handler Value
+postApiUserMembershipR ident = do
+    (memberId, memberUser) <- requireAuthPair
+    mode <- T.toLower . T.strip <$> runInputPost (fromMaybe "request" <$> iopt textField "mode")
+    now <- liftIO getCurrentTime
+    Entity creatorId creator <- runDB $ getBy404 $ UniqueUser ident
+    when (creatorId == memberId) $
+        apiError status400 "You cannot subscribe to your own membership."
+    when (userMembershipPriceCents creator <= 0) $
+        apiError status400 "This writer has not enabled paid memberships."
+    mMembership <- runDB $ getBy $ UniqueMembership creatorId memberId
+    case mode of
+        "cancel" -> do
+            Entity existingId existing <- maybe (apiError status400 "No membership request was found.") pure mMembership
+            runDB $ update existingId
+                [ MembershipStatus =. "cancelled"
+                , MembershipUpdatedAt =. now
+                , MembershipExpiresAt =. if membershipStatus existing == "active" then Just now else membershipExpiresAt existing
+                ]
+            runDB $ updateWhere
+                [ MembershipOrderMembership ==. existingId
+                , MembershipOrderStatus ==. "pending"
+                ]
+                [ MembershipOrderStatus =. "cancelled"
+                ]
+            updated <- runDB $ get404 existingId
+            returnJson $ object
+                [ "membership" .= membershipValue (Just creator) (Just memberUser) (Entity existingId updated)
+                ]
+        _ -> do
+            membershipId <- case mMembership of
+                Just (Entity existingId existing) -> do
+                    when (membershipStatusActiveAt now existing) $
+                        apiError status400 "You already have an active membership."
+                    runDB $ update existingId
+                        [ MembershipPriceCents =. userMembershipPriceCents creator
+                        , MembershipStatus =. "pending"
+                        , MembershipStartedAt =. Nothing
+                        , MembershipExpiresAt =. Nothing
+                        , MembershipUpdatedAt =. now
+                        ]
+                    pure existingId
+                Nothing -> runDB $ insert Membership
+                    { membershipCreator = creatorId
+                    , membershipMember = memberId
+                    , membershipPriceCents = userMembershipPriceCents creator
+                    , membershipStatus = "pending"
+                    , membershipAutoRenew = True
+                    , membershipStartedAt = Nothing
+                    , membershipExpiresAt = Nothing
+                    , membershipCreatedAt = now
+                    , membershipUpdatedAt = now
+                    }
+            pendingOrder <- runDB $ selectFirst
+                [ MembershipOrderMembership ==. membershipId
+                , MembershipOrderStatus ==. "pending"
+                ]
+                [Desc MembershipOrderCreatedAt]
+            orderEntity <- case pendingOrder of
+                Just (Entity existingOrderId _) -> do
+                    runDB $ update existingOrderId [MembershipOrderAmountCents =. userMembershipPriceCents creator]
+                    updatedOrder <- runDB $ get404 existingOrderId
+                    pure (Entity existingOrderId updatedOrder)
+                Nothing -> do
+                    orderId <- runDB $ insert MembershipOrder
+                        { membershipOrderMembership = membershipId
+                        , membershipOrderCreator = creatorId
+                        , membershipOrderMember = memberId
+                        , membershipOrderAmountCents = userMembershipPriceCents creator
+                        , membershipOrderStatus = "pending"
+                        , membershipOrderProvider = Nothing
+                        , membershipOrderProviderOrderId = Nothing
+                        , membershipOrderAdminNote = Nothing
+                        , membershipOrderCreatedAt = now
+                        , membershipOrderPaidAt = Nothing
+                        }
+                    Entity orderId <$> runDB (get404 orderId)
+            membership <- runDB $ get404 membershipId
+            let membershipMap = M.singleton membershipId membership
+                userMap = M.fromList [(creatorId, creator), (memberId, memberUser)]
+            returnJson $ object
+                [ "membership" .= membershipValue (Just creator) (Just memberUser) (Entity membershipId membership)
+                , "order" .= membershipOrderValue membershipMap userMap orderEntity
+                ]
 
 postApiMeThemeR :: Handler Value
 postApiMeThemeR = do
@@ -447,7 +697,11 @@ postApiThemePurchaseR themeId = do
 
 postApiThemePurchaseConfirmR :: ThemeId -> Handler Value
 postApiThemePurchaseConfirmR themeId = do
-    (userId, _user) <- requireAuthPair
+    _ <- requireAdminAuth
+    rawUserId <- runInputPost $ ireq textField "userId"
+    userId <- case fromPathPiece rawUserId of
+        Just parsedUserId -> pure parsedUserId
+        Nothing -> apiError status400 "Invalid user id."
     desiredStatus <- normalizeThemeOrderStatus <$> runInputPost (fromMaybe "paid" <$> iopt textField "status")
     theme <- runDB $ get404 themeId
     pendingOrderEntity <- runDB $
@@ -490,9 +744,9 @@ postApiThemeCreateR = do
     now <- liftIO getCurrentTime
     theme <- readUserThemeInput userId Nothing now
     authoredThemeCount <- runDB $ count [ThemeAuthor ==. Just userId]
-    when (not (userHasDesignerPro user) && authoredThemeCount >= 3) $
+    when (not (userHasDesignerProAt now user) && authoredThemeCount >= 3) $
         apiError status400 "Designer Pro is required to publish more than three themes."
-    when (themePriceCents theme > 0 && not (userHasDesignerPro user)) $
+    when (themePriceCents theme > 0 && not (userHasDesignerProAt now user)) $
         apiError status400 "Designer Pro is required for paid themes."
     ensureThemeSlugAvailable Nothing (themeSlug theme)
     themeId <- runDB $ insert theme
@@ -506,7 +760,7 @@ postApiThemeUpdateR themeId = do
     currentUser <- runDB $ get404 userId
     now <- liftIO getCurrentTime
     submittedTheme <- readUserThemeInput userId (themeParent existingTheme) now
-    when (themePriceCents submittedTheme > 0 && not (userHasDesignerPro currentUser)) $
+    when (themePriceCents submittedTheme > 0 && not (userHasDesignerProAt now currentUser)) $
         apiError status400 "Designer Pro is required for paid themes."
     ensureThemeSlugAvailable (Just themeId) (themeSlug submittedTheme)
     let updatedTheme =
@@ -563,7 +817,7 @@ postApiThemeForkR sourceThemeId = do
             , themeCreatedAt = now
             , themeUpdatedAt = now
             }
-    when (priceCents > 0 && not (userHasDesignerPro user)) $
+    when (priceCents > 0 && not (userHasDesignerProAt now user)) $
         apiError status400 "Designer Pro is required for paid remix themes."
     when (name == "") $
         apiError status400 "Theme name is required."
@@ -583,8 +837,10 @@ postApiThemeReviewUpsertR themeId = do
     theme <- runDB $ get404 themeId
     unless (themeActive theme && themeStatus theme == "published") $
         apiError status400 "Only published themes can be reviewed."
+    when (themeAuthor theme == Just userId) $
+        apiError status400 "You cannot review your own theme."
     canUse <- canUseTheme userId themeId theme
-    unless (canUse || themeAuthor theme == Just userId) $
+    unless canUse $
         apiError status400 "Use this theme before reviewing it."
     now <- liftIO getCurrentTime
     existing <- runDB $ getBy $ UniqueThemeRating userId themeId
@@ -1054,3 +1310,65 @@ loadUserThemeReportIds userId themeIds
     | null themeIds = pure []
     | otherwise =
         map (themeReportTheme . entityVal) <$> runDB (selectList [ThemeReportUser ==. userId, ThemeReportTheme <-. L.nub themeIds] [])
+
+loadUsersByIds :: [UserId] -> Handler (M.Map UserId User)
+loadUsersByIds userIds
+    | null userIds = pure M.empty
+    | otherwise = do
+        users <- runDB $ selectList [UserId <-. L.nub userIds] []
+        pure $ M.fromList $ map (\(Entity userId user) -> (userId, user)) users
+
+loadMembershipMap :: [MembershipId] -> Handler (M.Map MembershipId Membership)
+loadMembershipMap membershipIds
+    | null membershipIds = pure M.empty
+    | otherwise = do
+        memberships <- runDB $ selectList [MembershipId <-. L.nub membershipIds] []
+        pure $ M.fromList $ map (\(Entity membershipId membership) -> (membershipId, membership)) memberships
+
+normalizeMembershipOrderStatus :: Text -> Text
+normalizeMembershipOrderStatus rawStatus =
+    let status = T.toLower $ T.strip rawStatus
+    in if status `elem` ["pending", "paid", "failed", "cancelled"]
+        then status
+        else "pending"
+
+refreshMembershipLifecycles :: UserId -> Handler ()
+refreshMembershipLifecycles userId = do
+    now <- liftIO getCurrentTime
+    createdMemberships <- runDB $ selectList [MembershipCreator ==. userId] [Desc MembershipUpdatedAt]
+    joinedMemberships <- runDB $ selectList [MembershipMember ==. userId] [Desc MembershipUpdatedAt]
+    let memberships =
+            L.nubBy
+                (\left right -> entityKey left == entityKey right)
+                (createdMemberships <> joinedMemberships)
+    forM_ memberships $ \(Entity membershipId membership) -> do
+        when (membershipStatus membership == "active" && maybe False (<= now) (membershipExpiresAt membership)) $ do
+            pendingRenewal <- runDB $ selectFirst
+                [ MembershipOrderMembership ==. membershipId
+                , MembershipOrderStatus ==. "pending"
+                ]
+                [Desc MembershipOrderCreatedAt]
+            if membershipAutoRenew membership
+                then do
+                    when (isNothing pendingRenewal) $
+                        runDB $ insert_ MembershipOrder
+                            { membershipOrderMembership = membershipId
+                            , membershipOrderCreator = membershipCreator membership
+                            , membershipOrderMember = membershipMember membership
+                            , membershipOrderAmountCents = membershipPriceCents membership
+                            , membershipOrderStatus = "pending"
+                            , membershipOrderProvider = Just "membership-renewal"
+                            , membershipOrderProviderOrderId = Nothing
+                            , membershipOrderAdminNote = Nothing
+                            , membershipOrderCreatedAt = now
+                            , membershipOrderPaidAt = Nothing
+                            }
+                    runDB $ update membershipId
+                        [ MembershipStatus =. "pending"
+                        , MembershipUpdatedAt =. now
+                        ]
+                else
+                    runDB $ update membershipId
+                        [ MembershipStatus =. "expired"
+                        , MembershipUpdatedAt =. now
+                        ]

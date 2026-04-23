@@ -121,6 +121,7 @@ createUserWithPassword ident password = runDB $ do
         , userIsAdmin = False
         , userPlan = "free"
         , userPlanExpiresAt = Nothing
+        , userMembershipPriceCents = 0
         , userTheme = Nothing
         , userThemeOverrides = Nothing
         }
@@ -136,6 +137,7 @@ createAdminWithPassword ident password = runDB $ do
         , userIsAdmin = True
         , userPlan = "designer-pro"
         , userPlanExpiresAt = Nothing
+        , userMembershipPriceCents = 0
         , userTheme = Nothing
         , userThemeOverrides = Nothing
         }
@@ -151,6 +153,7 @@ createUserWithProfile ident displayName bio = runDB $ do
         , userIsAdmin = False
         , userPlan = "free"
         , userPlanExpiresAt = Nothing
+        , userMembershipPriceCents = 0
         , userTheme = Nothing
         , userThemeOverrides = Nothing
         }

@@ -60,6 +60,83 @@ userHasWriterPro user = isWriterProPlan (userPlan user) || userIsAdmin user
 userHasDesignerPro :: User -> Bool
 userHasDesignerPro user = isDesignerProPlan (userPlan user) || userIsAdmin user
 
+effectiveUserPlanAt :: UTCTime -> User -> Text
+effectiveUserPlanAt now user
+    | userIsAdmin user = "designer-pro"
+    | otherwise =
+        case userPlanExpiresAt user of
+            Just expiresAt | expiresAt <= now -> "free"
+            _ -> normalizeUserPlan (userPlan user)
+
+userHasWriterProAt :: UTCTime -> User -> Bool
+userHasWriterProAt now user = isWriterProPlan (effectiveUserPlanAt now user)
+
+userHasDesignerProAt :: UTCTime -> User -> Bool
+userHasDesignerProAt now user = isDesignerProPlan (effectiveUserPlanAt now user)
+
+membershipStatusActiveAt :: UTCTime -> Membership -> Bool
+membershipStatusActiveAt now membership =
+    membershipStatus membership == "active" &&
+    case membershipExpiresAt membership of
+        Nothing -> True
+        Just expiresAt -> expiresAt > now
+
+lookupMembershipFor :: UTCTime -> UserId -> UserId -> Handler (Maybe (Entity Membership))
+lookupMembershipFor now creatorId memberId = do
+    refreshMembershipEntity now creatorId memberId
+    mMembership <- runDB $ getBy $ UniqueMembership creatorId memberId
+    pure $
+        case mMembership of
+            Just entity@(Entity _ membership)
+                | membershipStatusActiveAt now membership -> Just entity
+                | membershipStatus membership == "pending" -> Just entity
+                | otherwise -> Just entity
+            Nothing -> Nothing
+
+hasActiveMembershipFor :: UTCTime -> UserId -> UserId -> Handler Bool
+hasActiveMembershipFor now creatorId memberId = do
+    refreshMembershipEntity now creatorId memberId
+    mMembership <- runDB $ getBy $ UniqueMembership creatorId memberId
+    pure $ maybe False (membershipStatusActiveAt now . entityVal) mMembership
+
+refreshMembershipEntity :: UTCTime -> UserId -> UserId -> Handler ()
+refreshMembershipEntity now creatorId memberId = do
+    mMembership <- runDB $ getBy $ UniqueMembership creatorId memberId
+    case mMembership of
+        Just (Entity membershipId membership)
+            | membershipStatus membership == "active" && maybe False (<= now) (membershipExpiresAt membership) -> do
+                pendingRenewal <- runDB $ selectFirst
+                    [ MembershipOrderMembership ==. membershipId
+                    , MembershipOrderStatus ==. "pending"
+                    ]
+                    [Desc MembershipOrderCreatedAt]
+                if membershipAutoRenew membership
+                    then do
+                        when (isNothing pendingRenewal) $
+                            runDB $ insert_ MembershipOrder
+                                { membershipOrderMembership = membershipId
+                                , membershipOrderCreator = creatorId
+                                , membershipOrderMember = memberId
+                                , membershipOrderAmountCents = membershipPriceCents membership
+                                , membershipOrderStatus = "pending"
+                                , membershipOrderProvider = Just "membership-renewal"
+                                , membershipOrderProviderOrderId = Nothing
+                                , membershipOrderAdminNote = Nothing
+                                , membershipOrderCreatedAt = now
+                                , membershipOrderPaidAt = Nothing
+                                }
+                        runDB $ update membershipId
+                            [ MembershipStatus =. "pending"
+                            , MembershipUpdatedAt =. now
+                            ]
+                    else
+                        runDB $ update membershipId
+                            [ MembershipStatus =. "expired"
+                            , MembershipUpdatedAt =. now
+                            ]
+            | otherwise -> pure ()
+        Nothing -> pure ()
+
 selectPublishedArticles :: Maybe Text -> Maybe Text -> Maybe Text -> Handler [Entity Article]
 selectPublishedArticles mTag mAuthorIdent mQuery = do
     now <- liftIO getCurrentTime
@@ -219,6 +296,7 @@ userValue user =
         , "isAdmin" .= userIsAdmin user
         , "plan" .= userPlan user
         , "planExpiresAt" .= fmap isoTime (userPlanExpiresAt user)
+        , "membershipPriceCents" .= userMembershipPriceCents user
         , "themeId" .= fmap fromSqlKey (userTheme user)
         , "themeOverrides" .= userThemeOverrides user
         ]
@@ -232,9 +310,53 @@ userValueWithTheme user mTheme =
         , "isAdmin" .= userIsAdmin user
         , "plan" .= userPlan user
         , "planExpiresAt" .= fmap isoTime (userPlanExpiresAt user)
+        , "membershipPriceCents" .= userMembershipPriceCents user
         , "themeId" .= fmap fromSqlKey (userTheme user)
         , "themeOverrides" .= userThemeOverrides user
         , "theme" .= fmap themeValue mTheme
+        ]
+
+membershipValue :: Maybe User -> Maybe User -> Entity Membership -> Value
+membershipValue mCreator mMember (Entity membershipId membership) =
+    object
+        [ "id" .= fromSqlKey membershipId
+        , "status" .= membershipStatus membership
+        , "priceCents" .= membershipPriceCents membership
+        , "autoRenew" .= membershipAutoRenew membership
+        , "startedAt" .= fmap isoTime (membershipStartedAt membership)
+        , "expiresAt" .= fmap isoTime (membershipExpiresAt membership)
+        , "createdAt" .= isoTime (membershipCreatedAt membership)
+        , "updatedAt" .= isoTime (membershipUpdatedAt membership)
+        , "creator" .= fmap userValue mCreator
+        , "member" .= fmap userValue mMember
+        ]
+
+membershipOrderValue :: M.Map MembershipId Membership -> M.Map UserId User -> Entity MembershipOrder -> Value
+membershipOrderValue membershipMap userMap (Entity orderId order) =
+    object
+        [ "id" .= fromSqlKey orderId
+        , "amountCents" .= membershipOrderAmountCents order
+        , "status" .= membershipOrderStatus order
+        , "provider" .= membershipOrderProvider order
+        , "providerOrderId" .= membershipOrderProviderOrderId order
+        , "adminNote" .= fmap unTextarea (membershipOrderAdminNote order)
+        , "createdAt" .= isoTime (membershipOrderCreatedAt order)
+        , "paidAt" .= fmap isoTime (membershipOrderPaidAt order)
+        , "membershipId" .= fromSqlKey (membershipOrderMembership order)
+        , "membership" .= fmap (\membership -> membershipValue (M.lookup (membershipCreator membership) userMap) (M.lookup (membershipMember membership) userMap) (Entity (membershipOrderMembership order) membership)) (M.lookup (membershipOrderMembership order) membershipMap)
+        , "creator" .= fmap userValue (M.lookup (membershipOrderCreator order) userMap)
+        , "member" .= fmap userValue (M.lookup (membershipOrderMember order) userMap)
+        ]
+
+membershipAccessValue :: User -> Maybe (Entity Membership) -> UTCTime -> Value
+membershipAccessValue creator mMembership now =
+    object
+        [ "enabled" .= (userMembershipPriceCents creator > 0)
+        , "priceCents" .= userMembershipPriceCents creator
+        , "viewerStatus" .= fmap (membershipStatus . entityVal) mMembership
+        , "active" .= maybe False (membershipStatusActiveAt now . entityVal) mMembership
+        , "startedAt" .= (fmap isoTime =<< (membershipStartedAt . entityVal <$> mMembership))
+        , "expiresAt" .= (fmap isoTime =<< (membershipExpiresAt . entityVal <$> mMembership))
         ]
 
 themeValue :: Entity Theme -> Value
@@ -637,7 +759,7 @@ isArticleVisibleToViewer now mViewerId isAdminViewer article
     | otherwise =
         case articleVisibility article of
             "private" -> False
-            "members" -> isJust mViewerId && scheduledOk
+            "members" -> False
             _ -> scheduledOk
   where
     scheduledOk =

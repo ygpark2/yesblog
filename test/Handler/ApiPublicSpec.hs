@@ -3,6 +3,7 @@
 module Handler.ApiPublicSpec (spec) where
 
 import TestImport
+import Yesod.Markdown (Markdown (..))
 
 spec :: Spec
 spec = withApp $ do
@@ -89,3 +90,56 @@ spec = withApp $ do
             statusIs 200
             bodyContains "\"displayName\":\"Profile Author\""
             bodyContains "\"title\":\"Profile Post\""
+
+        it "hides members-only posts from other signed-in users" $ do
+            Entity authorId _ <- createUser "members-author"
+            viewerEntity <- createUser "signed-viewer"
+            now <- liftIO getCurrentTime
+            _ <- runDB $ insert Article
+                { articleAuthor = authorId
+                , articleTitle = "Members Post"
+                , articleContent = Markdown "Restricted body"
+                , articleSlug = "members-post"
+                , articleDraft = False
+                , articleVisibility = "members"
+                , articlePublishAt = Nothing
+                , articleCreatedAt = now
+                , articleUpdatedAt = now
+                }
+
+            authenticateAs viewerEntity
+            get $ ApiPostR "members-post"
+            statusIs 404
+
+        it "shows members-only posts to active paid members" $ do
+            Entity authorId _ <- createUser "paid-members-author"
+            viewerEntity@(Entity viewerId _) <- createUser "paid-member"
+            now <- liftIO getCurrentTime
+            _ <- runDB $ update authorId [UserMembershipPriceCents =. 1200]
+            _ <- runDB $ insert Membership
+                { membershipCreator = authorId
+                , membershipMember = viewerId
+                , membershipPriceCents = 1200
+                , membershipStatus = "active"
+                , membershipAutoRenew = False
+                , membershipStartedAt = Just now
+                , membershipExpiresAt = Nothing
+                , membershipCreatedAt = now
+                , membershipUpdatedAt = now
+                }
+            _ <- runDB $ insert Article
+                { articleAuthor = authorId
+                , articleTitle = "Members Post Visible"
+                , articleContent = Markdown "Restricted body"
+                , articleSlug = "members-post-visible"
+                , articleDraft = False
+                , articleVisibility = "members"
+                , articlePublishAt = Nothing
+                , articleCreatedAt = now
+                , articleUpdatedAt = now
+                }
+
+            authenticateAs viewerEntity
+            get $ ApiPostR "members-post-visible"
+            statusIs 200
+            bodyContains "\"title\":\"Members Post Visible\""
