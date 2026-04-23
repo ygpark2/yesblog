@@ -22,6 +22,8 @@ postForm mart mtags html = do
                           <*> areq markdownField fsContent (articleContent <$> mart)
                           <*> areq textField     fsSlug    (articleSlug    <$> mart)
                           <*> areq checkBoxField fsDraft   (articleDraft   <$> mart)
+                          <*> pure (fromMaybe "public" $ articleVisibility <$> mart)
+                          <*> pure (articlePublishAt =<< mart)
                           <*> pure (fromMaybe now $ articleCreatedAt <$> mart)
                           <*> pure now
         defaultTags = Just (fmap T.unwords mtags)

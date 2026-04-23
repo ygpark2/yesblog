@@ -6,6 +6,7 @@ import Import
 import Helper.MakeBrief
 import Helper.ImageForm (uploadDirectory, uploadSubDirectory)
 import Database.Persist.Sql (fromSqlKey)
+import qualified Data.Aeson.KeyMap as KM
 import qualified Control.Monad as CM
 import qualified Data.Char as Char
 import qualified Data.List as L
@@ -40,8 +41,28 @@ allowedImageContentTypes =
     , "image/svg+xml"
     ]
 
+normalizeUserPlan :: Text -> Text
+normalizeUserPlan rawPlan =
+    let value = T.toLower $ T.strip rawPlan
+    in if value `elem` ["writer-pro", "designer-pro"]
+        then value
+        else "free"
+
+isWriterProPlan :: Text -> Bool
+isWriterProPlan plan = normalizeUserPlan plan `elem` ["writer-pro", "designer-pro"]
+
+isDesignerProPlan :: Text -> Bool
+isDesignerProPlan plan = normalizeUserPlan plan == "designer-pro"
+
+userHasWriterPro :: User -> Bool
+userHasWriterPro user = isWriterProPlan (userPlan user) || userIsAdmin user
+
+userHasDesignerPro :: User -> Bool
+userHasDesignerPro user = isDesignerProPlan (userPlan user) || userIsAdmin user
+
 selectPublishedArticles :: Maybe Text -> Maybe Text -> Maybe Text -> Handler [Entity Article]
 selectPublishedArticles mTag mAuthorIdent mQuery = do
+    now <- liftIO getCurrentTime
     mAuthorId <- case mAuthorIdent of
         Nothing -> pure Nothing
         Just ident -> entityKey <$> runDB (getBy404 $ UniqueUser ident) >>= pure . Just
@@ -49,7 +70,8 @@ selectPublishedArticles mTag mAuthorIdent mQuery = do
             [ArticleDraft !=. True] <>
             maybe [] (\authorId -> [ArticleAuthor ==. authorId]) mAuthorId
     baseArticles <- runDB $ selectList authorFilters [Desc ArticleUpdatedAt]
-    let queryFilteredArticles = applyQueryFilter mQuery baseArticles
+    let publishFilteredArticles = filter (isArticlePubliclyVisible now . entityVal) baseArticles
+        queryFilteredArticles = applyQueryFilter mQuery publishFilteredArticles
     case mTag of
         Nothing -> pure queryFilteredArticles
         Just tagName' -> do
@@ -145,6 +167,8 @@ articleSummaryValue tagMap authorMap (Entity articleId article) =
         , "createdAt" .= isoTime (articleCreatedAt article)
         , "updatedAt" .= isoTime (articleUpdatedAt article)
         , "readingMinutes" .= readingMinutes article
+        , "visibility" .= articleVisibility article
+        , "publishAt" .= fmap isoTime (articlePublishAt article)
         , "author" .= maybe Null userValue (M.lookup (articleAuthor article) authorMap)
         ]
 
@@ -160,7 +184,28 @@ articleDetailValue mviewer (Entity articleId article) author tags comments =
         , "createdAt" .= isoTime (articleCreatedAt article)
         , "updatedAt" .= isoTime (articleUpdatedAt article)
         , "readingMinutes" .= readingMinutes article
+        , "visibility" .= articleVisibility article
+        , "publishAt" .= fmap isoTime (articlePublishAt article)
         , "author" .= userValue author
+        , "viewer" .= fmap (userValue . entityVal) mviewer
+        , "comments" .= map (commentValue (userIdent . entityVal <$> mviewer)) comments
+        ]
+
+articleDetailValueWithTheme :: Maybe (Entity User) -> Entity Article -> User -> Maybe (Entity Theme) -> [Text] -> [Entity Comment] -> Value
+articleDetailValueWithTheme mviewer (Entity articleId article) author mTheme tags comments =
+    object
+        [ "id" .= fromSqlKey articleId
+        , "title" .= articleTitle article
+        , "slug" .= articleSlug article
+        , "content" .= markdownToText (articleContent article)
+        , "excerpt" .= makeBrief 220 (markdownToText $ articleContent article)
+        , "tags" .= tags
+        , "createdAt" .= isoTime (articleCreatedAt article)
+        , "updatedAt" .= isoTime (articleUpdatedAt article)
+        , "readingMinutes" .= readingMinutes article
+        , "visibility" .= articleVisibility article
+        , "publishAt" .= fmap isoTime (articlePublishAt article)
+        , "author" .= userValueWithTheme author mTheme
         , "viewer" .= fmap (userValue . entityVal) mviewer
         , "comments" .= map (commentValue (userIdent . entityVal <$> mviewer)) comments
         ]
@@ -172,7 +217,117 @@ userValue user =
         , "displayName" .= fromMaybe (userIdent user) (userDisplayName user)
         , "bio" .= fmap unTextarea (userBio user)
         , "isAdmin" .= userIsAdmin user
+        , "plan" .= userPlan user
+        , "planExpiresAt" .= fmap isoTime (userPlanExpiresAt user)
+        , "themeId" .= fmap fromSqlKey (userTheme user)
+        , "themeOverrides" .= userThemeOverrides user
         ]
+
+userValueWithTheme :: User -> Maybe (Entity Theme) -> Value
+userValueWithTheme user mTheme =
+    object
+        [ "ident" .= userIdent user
+        , "displayName" .= fromMaybe (userIdent user) (userDisplayName user)
+        , "bio" .= fmap unTextarea (userBio user)
+        , "isAdmin" .= userIsAdmin user
+        , "plan" .= userPlan user
+        , "planExpiresAt" .= fmap isoTime (userPlanExpiresAt user)
+        , "themeId" .= fmap fromSqlKey (userTheme user)
+        , "themeOverrides" .= userThemeOverrides user
+        , "theme" .= fmap themeValue mTheme
+        ]
+
+themeValue :: Entity Theme -> Value
+themeValue (Entity themeId theme) =
+    object
+        [ "id" .= fromSqlKey themeId
+        , "name" .= themeName theme
+        , "slug" .= themeSlug theme
+        , "description" .= fmap unTextarea (themeDescription theme)
+        , "backgroundColor" .= themeBackgroundColor theme
+        , "surfaceColor" .= themeSurfaceColor theme
+        , "textColor" .= themeTextColor theme
+        , "accentColor" .= themeAccentColor theme
+        , "headingFont" .= themeHeadingFont theme
+        , "bodyFont" .= themeBodyFont theme
+        , "headerTemplate" .= fmap unTextarea (themeHeaderTemplate theme)
+        , "bodyTemplate" .= fmap unTextarea (themeBodyTemplate theme)
+        , "footerTemplate" .= fmap unTextarea (themeFooterTemplate theme)
+        , "customCss" .= fmap unTextarea (themeCustomCss theme)
+        , "authorId" .= fmap fromSqlKey (themeAuthor theme)
+        , "parentId" .= fmap fromSqlKey (themeParent theme)
+        , "priceCents" .= themePriceCents theme
+        , "status" .= themeStatus theme
+        , "license" .= themeLicense theme
+        , "active" .= themeActive theme
+        , "createdAt" .= isoTime (themeCreatedAt theme)
+        , "updatedAt" .= isoTime (themeUpdatedAt theme)
+        ]
+
+themeMarketplaceValue :: Maybe UserId -> [ThemeId] -> Entity Theme -> Value
+themeMarketplaceValue mUserId ownedThemeIds entity@(Entity themeId theme) =
+    let isOwnTheme = isJust mUserId && themeAuthor theme == mUserId
+        owned = themePriceCents theme == 0 || themeId `elem` ownedThemeIds || isOwnTheme
+    in object
+        [ "theme" .= themeValue entity
+        , "owned" .= owned
+        , "canUse" .= owned
+        , "canFork" .= owned
+        , "isAuthor" .= isOwnTheme
+        , "canEdit" .= isOwnTheme
+        , "canDelete" .= isOwnTheme
+        ]
+
+themeOrderValue :: M.Map ThemeId Theme -> Entity ThemeOrder -> Value
+themeOrderValue themeMap (Entity orderId order) =
+    object
+        [ "id" .= fromSqlKey orderId
+        , "amountCents" .= themeOrderAmountCents order
+        , "status" .= themeOrderStatus order
+        , "provider" .= themeOrderProvider order
+        , "providerOrderId" .= themeOrderProviderOrderId order
+        , "createdAt" .= isoTime (themeOrderCreatedAt order)
+        , "paidAt" .= fmap isoTime (themeOrderPaidAt order)
+        , "theme" .= fmap (\theme -> themeValue (Entity (themeOrderTheme order) theme)) (M.lookup (themeOrderTheme order) themeMap)
+        ]
+
+themeOrderAdminValue :: M.Map ThemeId Theme -> M.Map UserId User -> Entity ThemeOrder -> Value
+themeOrderAdminValue themeMap userMap orderEntity@(Entity _ order) =
+    case themeOrderValue themeMap orderEntity of
+        Object baseObject ->
+            Object $ KM.insert "user" (toJSON $ fmap userValue (M.lookup (themeOrderUser order) userMap)) baseObject
+        other -> other
+
+themeReviewValue :: M.Map ThemeId Theme -> M.Map UserId User -> Entity ThemeReview -> Value
+themeReviewValue themeMap reviewerMap (Entity reviewId review) =
+    object
+        [ "id" .= fromSqlKey reviewId
+        , "status" .= themeReviewStatus review
+        , "note" .= fmap unTextarea (themeReviewNote review)
+        , "createdAt" .= isoTime (themeReviewCreatedAt review)
+        , "updatedAt" .= isoTime (themeReviewUpdatedAt review)
+        , "theme" .= fmap (\theme -> themeValue (Entity (themeReviewTheme review) theme)) (M.lookup (themeReviewTheme review) themeMap)
+        , "reviewer" .= fmap userValue (themeReviewReviewer review >>= (`M.lookup` reviewerMap))
+        ]
+
+themePayoutValue :: M.Map UserId User -> Entity ThemePayout -> Value
+themePayoutValue userMap (Entity payoutId payout) =
+    object
+        [ "id" .= fromSqlKey payoutId
+        , "amountCents" .= themePayoutAmountCents payout
+        , "status" .= themePayoutStatus payout
+        , "sellerNote" .= fmap unTextarea (themePayoutSellerNote payout)
+        , "adminNote" .= fmap unTextarea (themePayoutAdminNote payout)
+        , "requestedAt" .= isoTime (themePayoutRequestedAt payout)
+        , "processedAt" .= fmap isoTime (themePayoutProcessedAt payout)
+        , "user" .= fmap userValue (M.lookup (themePayoutUser payout) userMap)
+        ]
+
+loadUserTheme :: User -> Handler (Maybe (Entity Theme))
+loadUserTheme user =
+    case userTheme user of
+        Nothing -> pure Nothing
+        Just themeId -> runDB $ getEntity themeId
 
 adminArticleValue :: M.Map ArticleId [Text] -> M.Map UserId User -> M.Map ArticleId Int -> Entity Article -> Value
 adminArticleValue tagMap authorMap commentCountMap (Entity articleId article) =
@@ -468,3 +623,24 @@ imageValue (Entity imageId image) =
         , "description" .= fmap unTextarea (imageDescription image)
         , "previewable" .= previewableImage (imageFilename image)
         ]
+isArticlePubliclyVisible :: UTCTime -> Article -> Bool
+isArticlePubliclyVisible now article =
+    articleVisibility article == "public" &&
+    case articlePublishAt article of
+        Nothing -> True
+        Just publishAt -> publishAt <= now
+
+isArticleVisibleToViewer :: UTCTime -> Maybe UserId -> Bool -> Article -> Bool
+isArticleVisibleToViewer now mViewerId isAdminViewer article
+    | isAdminViewer = True
+    | maybe False (== articleAuthor article) mViewerId = True
+    | otherwise =
+        case articleVisibility article of
+            "private" -> False
+            "members" -> isJust mViewerId && scheduledOk
+            _ -> scheduledOk
+  where
+    scheduledOk =
+        case articlePublishAt article of
+            Nothing -> True
+            Just publishAt -> publishAt <= now

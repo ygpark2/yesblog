@@ -20,7 +20,35 @@
 /api/session               ApiSessionR    GET
 /api/me                    ApiMeR         GET
 /api/me/update             ApiMeUpdateR   POST
+/api/me/plan               ApiMePlanR     POST
+/api/me/domains            ApiMeDomainsR  GET POST
+/api/me/theme              ApiMeThemeR    POST
+/api/me/themes             ApiMeThemesR   GET
+/api/me/theme/orders       ApiMeThemeOrdersR GET
+/api/me/theme/stats        ApiMeThemeStatsR GET
+/api/me/theme/payouts      ApiMeThemePayoutsR GET
+/api/me/theme/payout-request ApiMeThemePayoutRequestR POST
+/api/themes                ApiThemesR     GET
+/api/themes/marketplace    ApiThemeMarketplaceR GET
+/api/themes/create         ApiThemeCreateR POST
+/api/theme/#ThemeId/update ApiThemeUpdateR POST
+/api/theme/#ThemeId/delete ApiThemeDeleteR POST
+/api/theme/#ThemeId/review ApiThemeReviewUpsertR POST
+/api/theme/#ThemeId/report ApiThemeReportR POST
+/api/theme/#ThemeId/purchase ApiThemePurchaseR POST
+/api/theme/#ThemeId/purchase/confirm ApiThemePurchaseConfirmR POST
+/api/theme/#ThemeId/fork   ApiThemeForkR  POST
 /api/admin/dashboard       ApiAdminDashboardR GET
+/api/admin/theme/orders    ApiAdminThemeOrdersR GET
+/api/admin/theme/payouts   ApiAdminThemePayoutsR GET
+/api/admin/themes/review   ApiAdminThemeReviewR GET
+/api/admin/themes          ApiAdminThemesR GET POST
+/api/admin/theme/order/#ThemeOrderId/update ApiAdminThemeOrderUpdateR POST
+/api/admin/theme/payout/#ThemePayoutId/update ApiAdminThemePayoutUpdateR POST
+/api/admin/theme/#ThemeId/approve ApiAdminThemeApproveR POST
+/api/admin/theme/#ThemeId/reject ApiAdminThemeRejectR POST
+/api/admin/theme/#ThemeId/update ApiAdminThemeUpdateR POST
+/api/admin/theme/#ThemeId/delete ApiAdminThemeDeleteR POST
 /api/admin/article/#ArticleId/delete ApiAdminArticleDeleteR POST
 /api/admin/comment/#CommentId/delete ApiAdminCommentDeleteR POST
 /api/admin/user/#UserId/delete ApiAdminUserDeleteR POST

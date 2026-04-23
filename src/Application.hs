@@ -100,6 +100,7 @@ makeFoundation appSettings = do
 
     -- Perform database migration using our application's logging settings.
     runLoggingT (runSqlPool (migrateSchema $ appDatabaseConf appSettings) pool) logFunc
+    seedDefaultThemes pool
     seedAdminAccount appSettings pool
 
     -- Return the foundation
@@ -117,8 +118,20 @@ migrateSchema (SqliteDatabase _) = do
         else runMigration migrateAll
 
 ensureExistingSqliteSchema :: forall m. MonadIO m => ReaderT SqlBackend m ()
-ensureExistingSqliteSchema =
+ensureExistingSqliteSchema = do
     ensureArticleUpdatedAtColumn
+    ensureArticlePublishingColumns
+    ensureThemeTable
+    ensureThemeMarketplaceColumns
+    ensureThemePurchaseTable
+    ensureThemeOrderTable
+    ensureThemeReviewTable
+    ensureThemePayoutTable
+    ensureThemeRatingTable
+    ensureThemeReportTable
+    ensureCustomDomainTable
+    ensureUserThemeColumns
+    ensureUserPlanColumns
 
 ensureArticleUpdatedAtColumn :: forall m. MonadIO m => ReaderT SqlBackend m ()
 ensureArticleUpdatedAtColumn = do
@@ -131,6 +144,205 @@ ensureArticleUpdatedAtColumn = do
             "UPDATE article SET updated_at = created_at WHERE updated_at IS NULL"
             []
 
+ensureArticlePublishingColumns :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureArticlePublishingColumns = do
+    columnNames <- fmap unSingle <$> (rawSql
+        "SELECT name FROM pragma_table_info('article') ORDER BY cid"
+        [] :: ReaderT SqlBackend m [Single Text])
+    unless ("visibility" `elem` columnNames) $
+        rawExecute "ALTER TABLE article ADD COLUMN visibility VARCHAR NOT NULL DEFAULT 'public'" []
+    unless ("publish_at" `elem` columnNames) $
+        rawExecute "ALTER TABLE article ADD COLUMN publish_at TIMESTAMP NULL" []
+
+ensureThemeTable :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureThemeTable = do
+    rawExecute
+        "CREATE TABLE IF NOT EXISTS theme (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, slug VARCHAR NOT NULL, description VARCHAR NULL, author INTEGER NULL REFERENCES \"user\"(id), parent INTEGER NULL REFERENCES theme(id), background_color VARCHAR NOT NULL, surface_color VARCHAR NOT NULL, text_color VARCHAR NOT NULL, accent_color VARCHAR NOT NULL, heading_font VARCHAR NULL, body_font VARCHAR NULL, header_template VARCHAR NULL, body_template VARCHAR NULL, footer_template VARCHAR NULL, custom_css VARCHAR NULL, price_cents INTEGER NOT NULL DEFAULT 0, status VARCHAR NOT NULL DEFAULT 'published', license VARCHAR NULL, active BOOLEAN NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT unique_theme_slug UNIQUE (slug))"
+        []
+
+ensureThemeMarketplaceColumns :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureThemeMarketplaceColumns = do
+    columnNames <- fmap unSingle <$> (rawSql
+        "SELECT name FROM pragma_table_info('theme') ORDER BY cid"
+        [] :: ReaderT SqlBackend m [Single Text])
+    unless ("author" `elem` columnNames) $
+        rawExecute "ALTER TABLE theme ADD COLUMN author INTEGER NULL REFERENCES \"user\"(id)" []
+    unless ("parent" `elem` columnNames) $
+        rawExecute "ALTER TABLE theme ADD COLUMN parent INTEGER NULL REFERENCES theme(id)" []
+    unless ("price_cents" `elem` columnNames) $
+        rawExecute "ALTER TABLE theme ADD COLUMN price_cents INTEGER NOT NULL DEFAULT 0" []
+    unless ("header_template" `elem` columnNames) $
+        rawExecute "ALTER TABLE theme ADD COLUMN header_template VARCHAR NULL" []
+    unless ("body_template" `elem` columnNames) $
+        rawExecute "ALTER TABLE theme ADD COLUMN body_template VARCHAR NULL" []
+    unless ("footer_template" `elem` columnNames) $
+        rawExecute "ALTER TABLE theme ADD COLUMN footer_template VARCHAR NULL" []
+    unless ("custom_css" `elem` columnNames) $
+        rawExecute "ALTER TABLE theme ADD COLUMN custom_css VARCHAR NULL" []
+    unless ("status" `elem` columnNames) $
+        rawExecute "ALTER TABLE theme ADD COLUMN status VARCHAR NOT NULL DEFAULT 'published'" []
+    unless ("license" `elem` columnNames) $
+        rawExecute "ALTER TABLE theme ADD COLUMN license VARCHAR NULL" []
+    unless ("created_at" `elem` columnNames) $
+        rawExecute "ALTER TABLE theme ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP" []
+    unless ("updated_at" `elem` columnNames) $
+        rawExecute "ALTER TABLE theme ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP" []
+
+ensureThemePurchaseTable :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureThemePurchaseTable =
+    rawExecute
+        "CREATE TABLE IF NOT EXISTS theme_purchase (id INTEGER PRIMARY KEY, user INTEGER NOT NULL REFERENCES \"user\"(id), theme INTEGER NOT NULL REFERENCES theme(id), price_cents INTEGER NOT NULL DEFAULT 0, purchased_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT unique_theme_purchase UNIQUE (user, theme))"
+        []
+
+ensureThemeOrderTable :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureThemeOrderTable =
+    rawExecute
+        "CREATE TABLE IF NOT EXISTS theme_order (id INTEGER PRIMARY KEY, user INTEGER NOT NULL REFERENCES \"user\"(id), theme INTEGER NOT NULL REFERENCES theme(id), amount_cents INTEGER NOT NULL DEFAULT 0, status VARCHAR NOT NULL DEFAULT 'pending', provider VARCHAR NULL, provider_order_id VARCHAR NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, paid_at TIMESTAMP NULL)"
+        []
+
+ensureThemeReviewTable :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureThemeReviewTable =
+    rawExecute
+        "CREATE TABLE IF NOT EXISTS theme_review (id INTEGER PRIMARY KEY, theme INTEGER NOT NULL REFERENCES theme(id), reviewer INTEGER NULL REFERENCES \"user\"(id), status VARCHAR NOT NULL DEFAULT 'pending', note VARCHAR NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT unique_theme_review UNIQUE (theme))"
+        []
+
+ensureThemePayoutTable :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureThemePayoutTable = do
+    rawExecute
+        "CREATE TABLE IF NOT EXISTS theme_payout (id INTEGER PRIMARY KEY, user INTEGER NOT NULL REFERENCES \"user\"(id), amount_cents INTEGER NOT NULL DEFAULT 0, status VARCHAR NOT NULL DEFAULT 'requested', seller_note VARCHAR NULL, admin_note VARCHAR NULL, requested_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, processed_at TIMESTAMP NULL)"
+        []
+    columnNames <- fmap unSingle <$> (rawSql
+        "SELECT name FROM pragma_table_info('theme_payout') ORDER BY cid"
+        [] :: ReaderT SqlBackend m [Single Text])
+    unless ("seller_note" `elem` columnNames) $
+        rawExecute "ALTER TABLE theme_payout ADD COLUMN seller_note VARCHAR NULL" []
+    unless ("admin_note" `elem` columnNames) $
+        rawExecute "ALTER TABLE theme_payout ADD COLUMN admin_note VARCHAR NULL" []
+    when ("note" `elem` columnNames) $ do
+        rawExecute
+            "UPDATE theme_payout SET seller_note = note WHERE seller_note IS NULL AND status <> 'rejected' AND note IS NOT NULL"
+            []
+        rawExecute
+            "UPDATE theme_payout SET admin_note = note WHERE admin_note IS NULL AND status = 'rejected' AND note IS NOT NULL"
+            []
+
+ensureThemeRatingTable :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureThemeRatingTable =
+    rawExecute
+        "CREATE TABLE IF NOT EXISTS theme_rating (id INTEGER PRIMARY KEY, user INTEGER NOT NULL REFERENCES \"user\"(id), theme INTEGER NOT NULL REFERENCES theme(id), rating INTEGER NOT NULL, review VARCHAR NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT unique_theme_rating UNIQUE (user, theme))"
+        []
+
+ensureThemeReportTable :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureThemeReportTable =
+    rawExecute
+        "CREATE TABLE IF NOT EXISTS theme_report (id INTEGER PRIMARY KEY, user INTEGER NOT NULL REFERENCES \"user\"(id), theme INTEGER NOT NULL REFERENCES theme(id), reason VARCHAR NOT NULL, details VARCHAR NULL, status VARCHAR NOT NULL DEFAULT 'open', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        []
+
+ensureCustomDomainTable :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureCustomDomainTable =
+    rawExecute
+        "CREATE TABLE IF NOT EXISTS custom_domain (id INTEGER PRIMARY KEY, user INTEGER NOT NULL REFERENCES \"user\"(id), domain VARCHAR NOT NULL, verification_token VARCHAR NOT NULL, status VARCHAR NOT NULL DEFAULT 'pending', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT unique_custom_domain UNIQUE (domain))"
+        []
+
+ensureUserThemeColumns :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureUserThemeColumns = do
+    columnNames <- fmap unSingle <$> (rawSql
+        "SELECT name FROM pragma_table_info('user') ORDER BY cid"
+        [] :: ReaderT SqlBackend m [Single Text])
+    unless ("theme" `elem` columnNames) $
+        rawExecute "ALTER TABLE \"user\" ADD COLUMN theme INTEGER NULL REFERENCES theme(id)" []
+    unless ("theme_overrides" `elem` columnNames) $
+        rawExecute "ALTER TABLE \"user\" ADD COLUMN theme_overrides VARCHAR NULL" []
+
+ensureUserPlanColumns :: forall m. MonadIO m => ReaderT SqlBackend m ()
+ensureUserPlanColumns = do
+    columnNames <- fmap unSingle <$> (rawSql
+        "SELECT name FROM pragma_table_info('user') ORDER BY cid"
+        [] :: ReaderT SqlBackend m [Single Text])
+    unless ("plan" `elem` columnNames) $
+        rawExecute "ALTER TABLE \"user\" ADD COLUMN plan VARCHAR NOT NULL DEFAULT 'free'" []
+    unless ("plan_expires_at" `elem` columnNames) $
+        rawExecute "ALTER TABLE \"user\" ADD COLUMN plan_expires_at TIMESTAMP NULL" []
+
+seedDefaultThemes :: ConnectionPool -> IO ()
+seedDefaultThemes pool = do
+    now <- getCurrentTime
+    let themes =
+            [ Theme
+                { themeName = "Editorial Ink"
+                , themeSlug = "editorial-ink"
+                , themeDescription = Just $ Textarea "Warm paper, dark ink, and classic editorial typography."
+                , themeAuthor = Nothing
+                , themeParent = Nothing
+                , themeBackgroundColor = "#f8f0dc"
+                , themeSurfaceColor = "#fffef7"
+                , themeTextColor = "#111111"
+                , themeAccentColor = "#ffe11a"
+                , themeHeadingFont = Just "Cormorant Garamond"
+                , themeBodyFont = Just "Space Grotesk"
+                , themeHeaderTemplate = Nothing
+                , themeBodyTemplate = Nothing
+                , themeFooterTemplate = Nothing
+                , themeCustomCss = Nothing
+                , themePriceCents = 0
+                , themeStatus = "published"
+                , themeLicense = Just "free-remix"
+                , themeActive = True
+                , themeCreatedAt = now
+                , themeUpdatedAt = now
+                }
+            , Theme
+                { themeName = "Ocean Desk"
+                , themeSlug = "ocean-desk"
+                , themeDescription = Just $ Textarea "Cool blue writing surface with crisp high-contrast panels."
+                , themeAuthor = Nothing
+                , themeParent = Nothing
+                , themeBackgroundColor = "#dff6fb"
+                , themeSurfaceColor = "#ffffff"
+                , themeTextColor = "#102027"
+                , themeAccentColor = "#57d5e5"
+                , themeHeadingFont = Just "Space Grotesk"
+                , themeBodyFont = Just "Space Grotesk"
+                , themeHeaderTemplate = Nothing
+                , themeBodyTemplate = Nothing
+                , themeFooterTemplate = Nothing
+                , themeCustomCss = Nothing
+                , themePriceCents = 0
+                , themeStatus = "published"
+                , themeLicense = Just "free-remix"
+                , themeActive = True
+                , themeCreatedAt = now
+                , themeUpdatedAt = now
+                }
+            , Theme
+                { themeName = "Garden Notes"
+                , themeSlug = "garden-notes"
+                , themeDescription = Just $ Textarea "Soft green accents for personal journals and essays."
+                , themeAuthor = Nothing
+                , themeParent = Nothing
+                , themeBackgroundColor = "#eef8de"
+                , themeSurfaceColor = "#fffdf6"
+                , themeTextColor = "#172016"
+                , themeAccentColor = "#7ef0b2"
+                , themeHeadingFont = Just "Cormorant Garamond"
+                , themeBodyFont = Just "Space Grotesk"
+                , themeHeaderTemplate = Nothing
+                , themeBodyTemplate = Nothing
+                , themeFooterTemplate = Nothing
+                , themeCustomCss = Nothing
+                , themePriceCents = 0
+                , themeStatus = "published"
+                , themeLicense = Just "free-remix"
+                , themeActive = True
+                , themeCreatedAt = now
+                , themeUpdatedAt = now
+                }
+            ]
+    forM_ themes $ \theme -> do
+        existingTheme <- runSqlPool (getBy $ UniqueThemeSlug $ themeSlug theme) pool
+        when (isNothing existingTheme) $
+            void $ runSqlPool (insert theme) pool
+
 seedAdminAccount :: AppSettings -> ConnectionPool -> IO ()
 seedAdminAccount settings pool = do
     mAdmin <- runSqlPool (getBy $ UniqueUser $ appSeedAdminIdent settings) pool
@@ -142,11 +354,15 @@ seedAdminAccount settings pool = do
                 , userDisplayName = Just $ appSeedAdminDisplayName settings
                 , userBio = Just $ Textarea "Default administrator account"
                 , userIsAdmin = True
+                , userPlan = "designer-pro"
+                , userPlanExpiresAt = Nothing
+                , userTheme = Nothing
+                , userThemeOverrides = Nothing
                 }
             void $ runSqlPool (insert seededAdmin) pool
         Just (Entity adminId adminUser) ->
-            unless (userIsAdmin adminUser) $
-                runSqlPool (update adminId [UserIsAdmin =. True]) pool
+            unless (userIsAdmin adminUser && userPlan adminUser == "designer-pro") $
+                runSqlPool (update adminId [UserIsAdmin =. True, UserPlan =. "designer-pro"]) pool
 
 -- | Convert our foundation to a WAI Application by calling @toWaiAppPlain@ and
 -- applying some additional middlewares.

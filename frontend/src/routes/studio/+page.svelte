@@ -17,6 +17,8 @@
   let tags = $state('');
   let articleId = $state('');
   let draft = $state(true);
+  let visibility = $state<'public' | 'private' | 'members'>('public');
+  let publishAt = $state('');
   let status = $state('Loading editor…');
   let previewOpen = $state(false);
   let slugTouched = $state(false);
@@ -48,6 +50,8 @@
     content: string;
     tags: string;
     draft: boolean;
+    visibility: 'public' | 'private' | 'members';
+    publishAt: string;
     slugTouched: boolean;
   } | null>(null);
 
@@ -108,7 +112,9 @@
       slug,
       content,
       tags,
-      draft
+      draft,
+      visibility,
+      publishAt
     });
   }
 
@@ -120,6 +126,8 @@
       content,
       tags,
       draft,
+      visibility,
+      publishAt,
       slugTouched
     };
   }
@@ -168,6 +176,8 @@
     content = pendingRestore.content;
     tags = pendingRestore.tags;
     draft = pendingRestore.draft;
+    visibility = pendingRestore.visibility ?? 'public';
+    publishAt = pendingRestore.publishAt ?? '';
     slugTouched = pendingRestore.slugTouched;
     permalink = '';
     showRestoreBanner = false;
@@ -252,6 +262,8 @@
     content = item.content;
     tags = item.tags.join(' ');
     draft = item.draft;
+    visibility = (item.visibility as 'public' | 'private' | 'members') ?? 'public';
+    publishAt = item.publishAt ? item.publishAt.slice(0, 16) : '';
     permalink = item.draft ? '' : `${base}/posts/${item.slug}`;
     slugTouched = true;
     status = item.draft ? 'Draft loaded' : 'Published article loaded';
@@ -268,6 +280,8 @@
     content = '';
     tags = '';
     draft = true;
+    visibility = 'public';
+    publishAt = '';
     permalink = '';
     slugTouched = false;
     loginRequired = false;
@@ -288,7 +302,9 @@
       slug,
       content,
       tags,
-      draft: String(nextDraft)
+      draft: String(nextDraft),
+      visibility,
+      publishAt
     });
 
     if (articleId) {
@@ -329,7 +345,9 @@
       title,
       slug,
       content,
-      tags
+      tags,
+      visibility,
+      publishAt
     });
 
     if (articleId) {
@@ -690,6 +708,8 @@
       content;
       tags;
       draft;
+      visibility;
+      publishAt;
       scheduleAutosave();
     }
   });
@@ -710,6 +730,8 @@
       content;
       tags;
       draft;
+      visibility;
+      publishAt;
       slugTouched;
       articleId;
       persistLocalDraft();
@@ -788,6 +810,23 @@
         <span class="eyebrow">Tags</span>
         <input class="search-input studio-input" bind:value={tags} placeholder="essay devlog notes" />
       </label>
+
+      <div class="grid studio-library-controls">
+        <label class="stack" style="gap: 8px;">
+          <span class="eyebrow">Visibility</span>
+          <select class="studio-select" bind:value={visibility}>
+            <option value="public">Public</option>
+            <option value="private">Private</option>
+            <option value="members">Members</option>
+          </select>
+        </label>
+
+        <label class="stack" style="gap: 8px;">
+          <span class="eyebrow">Publish at</span>
+          <input class="search-input studio-input" type="datetime-local" bind:value={publishAt} />
+        </label>
+      </div>
+      <p class="copy studio-field-note">Private, members-only, and scheduled publishing require Writer Pro.</p>
 
       <label class="stack" style="gap: 8px;">
         <span class="eyebrow">Content</span>

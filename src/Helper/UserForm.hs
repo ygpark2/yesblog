@@ -12,6 +12,8 @@ userForm html = do
       displayName = userDisplayName user
       bio         = userBio user
       isAdmin    = userIsAdmin user
+      theme       = userTheme user
+      themeOverrides = userThemeOverrides user
   renderDivs
     (User
       <$> areq textField (fieldSettingsLabel ("Username" :: Text)) (Just ident)
@@ -19,5 +21,9 @@ userForm html = do
       <*> aopt textField (fieldSettingsLabel ("Display name" :: Text)) (Just displayName)
       <*> aopt textareaField (fieldSettingsLabel ("Bio" :: Text)) (Just bio)
       <*> pure isAdmin
+      <*> pure (userPlan user)
+      <*> pure (userPlanExpiresAt user)
+      <*> pure theme
+      <*> pure themeOverrides
     )
     html

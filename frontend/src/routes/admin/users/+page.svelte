@@ -2,4 +2,4 @@
   import AdminConsole from '$lib/components/AdminConsole.svelte';
 </script>
 
-<AdminConsole section="overview" />
+<AdminConsole section="users" />

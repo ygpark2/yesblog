@@ -11,6 +11,8 @@ import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import Database.Persist.Sql (fromSqlKey)
+import Data.Time (defaultTimeLocale)
+import Data.Time.Format (parseTimeM)
 import System.Directory (doesFileExist, removeFile)
 import System.FilePath ((</>))
 import Yesod.Markdown (Markdown (..))
@@ -56,6 +58,8 @@ getApiEditorArticleR articleId = do
             , "content" .= markdownToText (articleContent article)
             , "slug" .= articleSlug article
             , "draft" .= articleDraft article
+            , "visibility" .= articleVisibility article
+            , "publishAt" .= fmap isoTime (articlePublishAt article)
             , "tags" .= oldTags
             , "createdAt" .= isoTime (articleCreatedAt article)
             , "updatedAt" .= isoTime (articleUpdatedAt article)
@@ -109,17 +113,23 @@ postApiEditorImageDeleteR imageId = do
 
 postApiEditorSaveR :: Handler Value
 postApiEditorSaveR = do
-    Entity currentUserId _ <- requireAuth
+    Entity currentUserId currentUser <- requireAuth
     mArticleId <- lookupOptionalArticleIdParam "articleId"
     title <- runInputPost $ fromMaybe "" <$> iopt textField "title"
     content <- runInputPost $ fromMaybe "" <$> iopt textField "content"
     slugInput <- runInputPost $ fromMaybe "" <$> iopt textField "slug"
     tagsText <- runInputPost $ fromMaybe "" <$> iopt textField "tags"
     draftInput <- runInputPost $ fromMaybe "false" <$> iopt textField "draft"
+    visibilityInput <- runInputPost $ fromMaybe "public" <$> iopt textField "visibility"
+    publishAtInput <- runInputPost $ fromMaybe "" <$> iopt textField "publishAt"
     now <- liftIO getCurrentTime
     let tags = normalizeTags tagsText
         isDraft = parseBoolText draftInput
         slugSource = if T.strip slugInput == "" then title else slugInput
+        visibility = normalizeArticleVisibility visibilityInput
+    publishAt <- parseOptionalPublishAt publishAtInput
+    when ((visibility /= "public" || isJust publishAt) && not (userHasWriterPro currentUser)) $
+        apiError status400 "Writer Pro is required for scheduling and member/private visibility."
     resolvedSlug <- ensureUniqueSlug mArticleId slugSource
     articleId <- case mArticleId of
         Just articleId -> do
@@ -130,13 +140,15 @@ postApiEditorSaveR = do
                     , ArticleContent =. Markdown content
                     , ArticleSlug =. resolvedSlug
                     , ArticleDraft =. isDraft
+                    , ArticleVisibility =. visibility
+                    , ArticlePublishAt =. publishAt
                     , ArticleUpdatedAt =. now
                     ]
                 deleteWhere [TagArticle ==. articleId]
                 CM.forM_ tags $ \tag -> insert $ Tag tag articleId
                 pure articleId
         Nothing -> runDB $ do
-            createdArticleId <- insert $ Article currentUserId (defaultDraftTitle title) (Markdown content) resolvedSlug isDraft now now
+            createdArticleId <- insert $ Article currentUserId (defaultDraftTitle title) (Markdown content) resolvedSlug isDraft visibility publishAt now now
             CM.forM_ tags $ \tag -> insert $ Tag tag createdArticleId
             pure createdArticleId
     savedArticle <- runDB $ get404 articleId
@@ -149,15 +161,21 @@ postApiEditorSaveR = do
 
 postApiEditorAutosaveR :: Handler Value
 postApiEditorAutosaveR = do
-    Entity currentUserId _ <- requireAuth
+    Entity currentUserId currentUser <- requireAuth
     mAutosaveArticleId <- lookupOptionalArticleIdParam "articleId"
     title <- runInputPost $ fromMaybe "" <$> iopt textField "title"
     content <- runInputPost $ fromMaybe "" <$> iopt textField "content"
     slugInput <- runInputPost $ fromMaybe "" <$> iopt textField "slug"
     tagsText <- runInputPost $ fromMaybe "" <$> iopt textField "tags"
+    visibilityInput <- runInputPost $ fromMaybe "public" <$> iopt textField "visibility"
+    publishAtInput <- runInputPost $ fromMaybe "" <$> iopt textField "publishAt"
     now <- liftIO getCurrentTime
     let tags = normalizeTags tagsText
         slugSource = if T.strip slugInput == "" then title else slugInput
+        visibility = normalizeArticleVisibility visibilityInput
+    publishAt <- parseOptionalPublishAt publishAtInput
+    when ((visibility /= "public" || isJust publishAt) && not (userHasWriterPro currentUser)) $
+        apiError status400 "Writer Pro is required for scheduling and member/private visibility."
     resolvedSlug <- ensureUniqueSlug mAutosaveArticleId slugSource
     articleId <- case mAutosaveArticleId of
         Just autosaveArticleId -> do
@@ -170,16 +188,34 @@ postApiEditorAutosaveR = do
                     , ArticleContent =. Markdown content
                     , ArticleSlug =. resolvedSlug
                     , ArticleDraft =. True
+                    , ArticleVisibility =. visibility
+                    , ArticlePublishAt =. publishAt
                     , ArticleUpdatedAt =. now
                     ]
                 deleteWhere [TagArticle ==. autosaveArticleId]
                 CM.forM_ tags $ \tag -> insert $ Tag tag autosaveArticleId
                 pure autosaveArticleId
         Nothing -> runDB $ do
-            createdArticleId <- insert $ Article currentUserId (defaultDraftTitle title) (Markdown content) resolvedSlug True now now
+            createdArticleId <- insert $ Article currentUserId (defaultDraftTitle title) (Markdown content) resolvedSlug True visibility publishAt now now
             CM.forM_ tags $ \tag -> insert $ Tag tag createdArticleId
             pure createdArticleId
     returnJson $ object
         [ "articleId" .= toPathPiece articleId
         , "slug" .= resolvedSlug
         ]
+
+normalizeArticleVisibility :: Text -> Text
+normalizeArticleVisibility rawValue =
+    let value = T.toLower $ T.strip rawValue
+    in if value `elem` ["private", "members"]
+        then value
+        else "public"
+
+parseOptionalPublishAt :: Text -> Handler (Maybe UTCTime)
+parseOptionalPublishAt rawValue =
+    let trimmed = T.strip rawValue
+    in if trimmed == ""
+        then pure Nothing
+        else case parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M" (T.unpack trimmed) <|> parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%S" (T.unpack trimmed) of
+            Just parsed -> pure $ Just parsed
+            Nothing -> apiError status400 "Invalid publish time."

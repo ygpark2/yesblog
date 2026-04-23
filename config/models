@@ -7,8 +7,105 @@ User
     displayName Text Maybe
     bio Textarea Maybe
     isAdmin Bool default=0
+    plan Text default='free'
+    planExpiresAt UTCTime Maybe
+    theme ThemeId Maybe
+    themeOverrides Text Maybe
     UniqueUser ident
     deriving Typeable
+
+Theme
+    name Text
+    slug Text
+    description Textarea Maybe
+    author UserId Maybe
+    parent ThemeId Maybe
+    backgroundColor Text
+    surfaceColor Text
+    textColor Text
+    accentColor Text
+    headingFont Text Maybe
+    bodyFont Text Maybe
+    headerTemplate Textarea Maybe
+    bodyTemplate Textarea Maybe
+    footerTemplate Textarea Maybe
+    customCss Textarea Maybe
+    priceCents Int default=0
+    status Text default='published'
+    license Text Maybe
+    active Bool default=1
+    createdAt UTCTime default=CURRENT_TIMESTAMP
+    updatedAt UTCTime default=CURRENT_TIMESTAMP
+    UniqueThemeSlug slug
+    deriving Show
+
+ThemePurchase
+    user UserId
+    theme ThemeId
+    priceCents Int default=0
+    purchasedAt UTCTime default=CURRENT_TIMESTAMP
+    UniqueThemePurchase user theme
+    deriving Show
+
+ThemeOrder
+    user UserId
+    theme ThemeId
+    amountCents Int default=0
+    status Text default='pending'
+    provider Text Maybe
+    providerOrderId Text Maybe
+    createdAt UTCTime default=CURRENT_TIMESTAMP
+    paidAt UTCTime Maybe
+    deriving Show
+
+ThemeReview
+    theme ThemeId
+    reviewer UserId Maybe
+    status Text default='pending'
+    note Textarea Maybe
+    createdAt UTCTime default=CURRENT_TIMESTAMP
+    updatedAt UTCTime default=CURRENT_TIMESTAMP
+    UniqueThemeReview theme
+    deriving Show
+
+ThemePayout
+    user UserId
+    amountCents Int default=0
+    status Text default='requested'
+    sellerNote Textarea Maybe
+    adminNote Textarea Maybe
+    requestedAt UTCTime default=CURRENT_TIMESTAMP
+    processedAt UTCTime Maybe
+    deriving Show
+
+ThemeRating
+    user UserId
+    theme ThemeId
+    rating Int
+    review Textarea Maybe
+    createdAt UTCTime default=CURRENT_TIMESTAMP
+    updatedAt UTCTime default=CURRENT_TIMESTAMP
+    UniqueThemeRating user theme
+    deriving Show
+
+ThemeReport
+    user UserId
+    theme ThemeId
+    reason Text
+    details Textarea Maybe
+    status Text default='open'
+    createdAt UTCTime default=CURRENT_TIMESTAMP
+    deriving Show
+
+CustomDomain
+    user UserId
+    domain Text
+    verificationToken Text
+    status Text default='pending'
+    createdAt UTCTime default=CURRENT_TIMESTAMP
+    updatedAt UTCTime default=CURRENT_TIMESTAMP
+    UniqueCustomDomain domain
+    deriving Show
 
 Comment
     name Text
@@ -27,6 +124,8 @@ Article
     content Markdown
     slug Text
     draft Bool default=0 -- sqlite3 data type Bool is 1 (True) or 0 (False)
+    visibility Text default='public'
+    publishAt UTCTime Maybe
     createdAt  UTCTime default=CURRENT_TIMESTAMP
     updatedAt  UTCTime default=CURRENT_TIMESTAMP
     UniqueSlug slug

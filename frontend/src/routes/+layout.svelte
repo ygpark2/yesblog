@@ -1,6 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import { base } from '$app/paths';
+  import { page } from '$app/stores';
 </script>
 
 <svelte:head>
@@ -12,32 +13,38 @@
   />
 </svelte:head>
 
-<header class="site-header">
-  <div class="app-shell site-header-inner">
-    <a class="brand" href={`${base}/`}>YesBlog</a>
-    <nav class="nav-row">
-      <a class="nav-link" href={`${base}/`}>Home</a>
-      <a class="nav-link" href={`${base}/archive`}>Archive</a>
-      <a class="nav-link" href={`${base}/search`}>Search</a>
-      <a class="nav-link" href={`${base}/studio`}>Studio</a>
-    </nav>
-  </div>
-</header>
-
-<main class="page-shell">
-  <div class="app-shell">
-    <slot />
-  </div>
-</main>
-
-<footer class="site-footer">
-  <div class="app-shell site-footer-inner">
-    <strong>YesBlog Frontend</strong>
-    <div class="nav-row">
-      <a class="nav-link" href={`${base}/`}>Posts</a>
-      <a class="nav-link" href={`${base}/archive`}>Archive</a>
-      <a class="nav-link" href={`${base}/search`}>Search</a>
-      <a class="nav-link" href={`${base}/studio`}>Studio</a>
+{#if $page.url.pathname === `${base}/admin` || $page.url.pathname.startsWith(`${base}/admin/`)}
+  <slot />
+{:else}
+  <header class="site-header">
+    <div class="app-shell site-header-inner">
+      <a class="brand" href={`${base}/`}>YesBlog</a>
+      <nav class="nav-row">
+        <a class="nav-link" href={`${base}/`}>Home</a>
+        <a class="nav-link" href={`${base}/archive`}>Archive</a>
+        <a class="nav-link" href={`${base}/search`}>Search</a>
+        <a class="nav-link" href={`${base}/themes`}>Themes</a>
+        <a class="nav-link" href={`${base}/studio`}>Studio</a>
+      </nav>
     </div>
-  </div>
-</footer>
+  </header>
+
+  <main class="page-shell">
+    <div class="app-shell">
+      <slot />
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="app-shell site-footer-inner">
+      <strong>YesBlog Frontend</strong>
+      <div class="nav-row">
+        <a class="nav-link" href={`${base}/`}>Posts</a>
+        <a class="nav-link" href={`${base}/archive`}>Archive</a>
+        <a class="nav-link" href={`${base}/search`}>Search</a>
+        <a class="nav-link" href={`${base}/themes`}>Themes</a>
+        <a class="nav-link" href={`${base}/studio`}>Studio</a>
+      </div>
+    </div>
+  </footer>
+{/if}

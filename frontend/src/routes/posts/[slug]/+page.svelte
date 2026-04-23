@@ -3,6 +3,7 @@
   import { env } from '$env/dynamic/public';
   import PostCard from '$lib/components/PostCard.svelte';
   import { renderMarkdown } from '$lib/markdown';
+  import { buildUserThemeStyle, escapeThemeValue, renderThemeTemplate, sanitizeThemeCss } from '$lib/theme';
   import type { ApiComment, ApiPostDetail, ApiPostSummary } from '$lib/types';
 
   const backendBaseUrl = env.PUBLIC_YESBLOG_API_BASE_URL || '';
@@ -19,6 +20,25 @@
   const post = $derived(data.item);
   const publishedDate = $derived(new Date(post.createdAt).toLocaleDateString());
   const updatedDate = $derived(new Date(post.updatedAt).toLocaleDateString());
+  const authorTheme = $derived(post.author?.theme ?? null);
+  const renderedPostContent = $derived(renderMarkdown(post.content));
+  const templateContext = $derived({
+    'site.title': 'YesBlog',
+    'post.title': escapeThemeValue(post.title),
+    'post.content': renderedPostContent,
+    'post.excerpt': escapeThemeValue(post.excerpt),
+    'post.publishedDate': escapeThemeValue(publishedDate),
+    'post.updatedDate': escapeThemeValue(updatedDate),
+    'post.readingMinutes': post.readingMinutes,
+    'post.tags': escapeThemeValue(post.tags.join(', ')),
+    'author.name': escapeThemeValue(post.author?.displayName ?? ''),
+    'author.ident': escapeThemeValue(post.author?.ident ?? ''),
+    'author.bio': escapeThemeValue(post.author?.bio ?? '')
+  });
+  const themeHeaderHtml = $derived(renderThemeTemplate(authorTheme?.headerTemplate, templateContext));
+  const themeBodyHtml = $derived(renderThemeTemplate(authorTheme?.bodyTemplate, templateContext));
+  const themeFooterHtml = $derived(renderThemeTemplate(authorTheme?.footerTemplate, templateContext));
+  const themeCustomCss = $derived(sanitizeThemeCss(authorTheme?.customCss));
   let hydratedPostSlug = $state('');
   let comments = $state<ApiComment[]>([]);
   let commentName = $state('');
@@ -159,8 +179,18 @@
   }
 </script>
 
-<div class="article-layout">
+<svelte:head>
+  {#if themeCustomCss}
+    <style>{themeCustomCss}</style>
+  {/if}
+</svelte:head>
+
+<div class="article-layout themed-page" style={buildUserThemeStyle(post.author)}>
   <article class="stack article-main">
+    {#if themeHeaderHtml}
+      <section class="theme-template-slot theme-template-header">{@html themeHeaderHtml}</section>
+    {/if}
+
     <section class="hero-card stack article-hero">
       <div class="meta-row">
         <a class="ghost-link" href={`${base}/`}>Back to archive</a>
@@ -194,9 +224,19 @@
       {/if}
     </section>
 
-    <section class="panel-card article-body-shell">
-      <div class="prose article-prose">{@html renderMarkdown(post.content)}</div>
-    </section>
+    {#if themeBodyHtml}
+      <section class="panel-card article-body-shell theme-template-slot theme-template-body">
+        {@html themeBodyHtml}
+      </section>
+    {:else}
+      <section class="panel-card article-body-shell">
+        <div class="prose article-prose">{@html renderedPostContent}</div>
+      </section>
+    {/if}
+
+    {#if themeFooterHtml}
+      <section class="theme-template-slot theme-template-footer">{@html themeFooterHtml}</section>
+    {/if}
   </article>
 
   <aside class="stack article-sidebar">

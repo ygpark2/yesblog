@@ -37,9 +37,13 @@ getApiPostsR = do
 getApiPostR :: Text -> Handler Value
 getApiPostR slug = do
     Entity articleId article <- runDB $ getBy404 $ UniqueSlug slug
-    when (articleDraft article) notFound
     mviewer <- maybeAuth
+    now <- liftIO getCurrentTime
+    let mViewerId = entityKey <$> mviewer
+        isAdminViewer = maybe False (userIsAdmin . entityVal) mviewer
+    when (articleDraft article || not (isArticleVisibleToViewer now mViewerId isAdminViewer article)) notFound
     author <- runDB $ get404 $ articleAuthor article
+    authorTheme <- loadUserTheme author
     tags <- runDB $ map (tagName . entityVal) <$> selectList [TagArticle ==. articleId] [Asc TagName]
     comments <- runDB $ selectList [CommentArticle ==. articleId] [Asc CommentPosted]
     relatedArticles <- runDB $ selectList
@@ -48,21 +52,24 @@ getApiPostR slug = do
         , ArticleAuthor ==. articleAuthor article
         ]
         [Desc ArticleUpdatedAt, LimitTo 3]
-    relatedTags <- loadTagMap (map entityKey relatedArticles)
-    relatedAuthors <- loadAuthorMap relatedArticles
+    let visibleRelatedArticles = filter (isArticleVisibleToViewer now mViewerId isAdminViewer . entityVal) relatedArticles
+    relatedTags <- loadTagMap (map entityKey visibleRelatedArticles)
+    relatedAuthors <- loadAuthorMap visibleRelatedArticles
     returnJson $ object
-        [ "item" .= articleDetailValue mviewer (Entity articleId article) author tags comments
-        , "related" .= map (articleSummaryValue relatedTags relatedAuthors) relatedArticles
+        [ "item" .= articleDetailValueWithTheme mviewer (Entity articleId article) author authorTheme tags comments
+        , "related" .= map (articleSummaryValue relatedTags relatedAuthors) visibleRelatedArticles
         ]
 
 postApiPostCommentR :: Text -> Handler Value
 postApiPostCommentR slug = do
     Entity articleId article <- runDB $ getBy404 $ UniqueSlug slug
-    when (articleDraft article) notFound
     rawName <- runInputPost $ fromMaybe "" <$> iopt textField "name"
     rawContent <- runInputPost $ fromMaybe "" <$> iopt textField "content"
     muser <- maybeAuth
     now <- liftIO getCurrentTime
+    let mViewerId = entityKey <$> muser
+        isAdminViewer = maybe False (userIsAdmin . entityVal) muser
+    when (articleDraft article || not (isArticleVisibleToViewer now mViewerId isAdminViewer article)) notFound
     enforceCommentCooldown now
     let normalizedContent = T.strip rawContent
         fallbackName = maybe "Anonymous" (\entity -> userIdent (entityVal entity)) muser
@@ -95,11 +102,14 @@ postApiCommentDeleteR commentId = do
 getApiUserR :: Text -> Handler Value
 getApiUserR ident = do
     Entity userId user <- runDB $ getBy404 $ UniqueUser ident
+    userTheme' <- loadUserTheme user
     articles <- runDB $ selectList [ArticleAuthor ==. userId, ArticleDraft !=. True] [Desc ArticleUpdatedAt]
-    articleTags <- loadTagMap (map entityKey articles)
-    authors <- loadAuthorMap articles
+    now <- liftIO getCurrentTime
+    let visibleArticles = filter (isArticlePubliclyVisible now . entityVal) articles
+    articleTags <- loadTagMap (map entityKey visibleArticles)
+    authors <- loadAuthorMap visibleArticles
     returnJson $ object
-        [ "user" .= userValue user
-        , "items" .= map (articleSummaryValue articleTags authors) articles
-        , "meta" .= object ["publishedCount" .= length articles]
+        [ "user" .= userValueWithTheme user userTheme'
+        , "items" .= map (articleSummaryValue articleTags authors) visibleArticles
+        , "meta" .= object ["publishedCount" .= length visibleArticles]
         ]

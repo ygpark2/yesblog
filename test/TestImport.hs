@@ -119,6 +119,10 @@ createUserWithPassword ident password = runDB $ do
         , userDisplayName = Nothing
         , userBio = Nothing
         , userIsAdmin = False
+        , userPlan = "free"
+        , userPlanExpiresAt = Nothing
+        , userTheme = Nothing
+        , userThemeOverrides = Nothing
         }
     insertEntity user
 
@@ -130,6 +134,10 @@ createAdminWithPassword ident password = runDB $ do
         , userDisplayName = Nothing
         , userBio = Nothing
         , userIsAdmin = True
+        , userPlan = "designer-pro"
+        , userPlanExpiresAt = Nothing
+        , userTheme = Nothing
+        , userThemeOverrides = Nothing
         }
     insertEntity user
 
@@ -141,6 +149,10 @@ createUserWithProfile ident displayName bio = runDB $ do
         , userDisplayName = displayName
         , userBio = Textarea <$> bio
         , userIsAdmin = False
+        , userPlan = "free"
+        , userPlanExpiresAt = Nothing
+        , userTheme = Nothing
+        , userThemeOverrides = Nothing
         }
     insertEntity user
 
@@ -157,6 +169,8 @@ createArticleWithContent authorId title content slug isDraft tags = runDB $ do
         , articleContent = Markdown content
         , articleSlug = slug
         , articleDraft = isDraft
+        , articleVisibility = "public"
+        , articlePublishAt = Nothing
         , articleCreatedAt = now
         , articleUpdatedAt = now
         }
