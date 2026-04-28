@@ -1,11 +1,9 @@
 <script lang="ts">
   import { base } from '$app/paths';
-  import { env } from '$env/dynamic/public';
+  import { apiFormPost, apiGet } from '$lib/api';
   import { buildThemeStyle } from '$lib/theme';
-  import type { ThemeMarketplaceItem } from '$lib/types';
+  import type { ApiSession, ThemeMarketplaceItem } from '$lib/types';
   import { onMount } from 'svelte';
-
-  const backendBaseUrl = env.PUBLIC_YESBLOG_API_BASE_URL || '';
   const headerTemplatePlaceholder = '<header><p>{{author.name}}</p><h1>{{post.title}}</h1></header>';
   const bodyTemplatePlaceholder = "<article class='prose article-prose'>{{post.content}}</article>";
   const footerTemplatePlaceholder = '<footer>Published by {{author.name}}</footer>';
@@ -18,6 +16,8 @@
   let ownershipFilter = $state<'all' | 'owned' | 'free' | 'paid' | 'remix'>('all');
   let sortMode = $state<'latest' | 'price-asc' | 'price-desc' | 'rating'>('latest');
   let selectedThemeId = $state<number | null>(null);
+  let currentThemeId = $state<number | null>(null);
+  let authenticated = $state(false);
   let reviewRating = $state('5');
   let reviewText = $state('');
   let reportReason = $state('');
@@ -66,22 +66,8 @@
     filteredItems.find((item) => item.theme.id === selectedThemeId) ?? filteredItems[0] ?? null
   );
 
-  async function readErrorMessage(response: Response, fallback: string) {
-    try {
-      const payload = await response.json();
-      if (typeof payload?.message === 'string' && payload.message.trim()) return payload.message;
-    } catch {
-      return fallback;
-    }
-    return fallback;
-  }
-
   async function fetchMarketplace() {
-    const response = await fetch(`${backendBaseUrl}/api/themes/marketplace`, {
-      credentials: 'include'
-    });
-    if (!response.ok) throw new Error(await readErrorMessage(response, 'Failed to load themes.'));
-    const data: { items: ThemeMarketplaceItem[] } = await response.json();
+    const data = await apiGet<{ items: ThemeMarketplaceItem[] }>('/api/themes/marketplace');
     items = data.items;
     selectedThemeId = selectedThemeId && data.items.some((item) => item.theme.id === selectedThemeId)
       ? selectedThemeId
@@ -89,21 +75,40 @@
     status = `${items.length} themes available`;
   }
 
+  async function refreshSession() {
+    const session = await apiGet<ApiSession>('/api/session');
+    authenticated = session.authenticated;
+    currentThemeId = typeof session.user?.themeId === 'number' ? session.user.themeId : null;
+  }
+
+  async function applyTheme(themeId: number | null) {
+    status = themeId ? 'Applying theme...' : 'Clearing theme...';
+    try {
+      const payload = new URLSearchParams({ themeId: themeId ? String(themeId) : '' });
+      await apiFormPost('/api/me/theme', payload);
+      currentThemeId = themeId;
+      status = themeId ? 'Theme applied to your blog.' : 'Theme cleared.';
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Theme apply failed.';
+    }
+  }
+
   async function purchaseTheme(themeId: number) {
     status = 'Creating order...';
-    const response = await fetch(`${backendBaseUrl}/api/theme/${themeId}/purchase`, {
-      method: 'POST',
-      credentials: 'include'
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Purchase failed. Log in first.');
-      return;
+    try {
+      const data = await apiFormPost<{ requiresConfirmation?: boolean }>(
+        `/api/theme/${themeId}/purchase`,
+        new URLSearchParams()
+      );
+      if (data.requiresConfirmation) {
+        status = 'Order created. Payment must be verified by an administrator before the theme is unlocked.';
+      } else {
+        await applyTheme(themeId);
+      }
+      await fetchMarketplace();
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Purchase failed. Log in first.';
     }
-    const data: { requiresConfirmation?: boolean } = await response.json();
-    if (data.requiresConfirmation) {
-      status = 'Order created. Payment must be verified by an administrator before the theme is unlocked.';
-    }
-    await fetchMarketplace();
   }
 
   async function forkTheme(item: ThemeMarketplaceItem) {
@@ -117,20 +122,13 @@
       slug,
       priceCents: '0'
     });
-    const response = await fetch(`${backendBaseUrl}/api/theme/${item.theme.id}/fork`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Remix failed. Purchase or log in first.');
-      return;
+    try {
+      await apiFormPost(`/api/theme/${item.theme.id}/fork`, payload);
+      await fetchMarketplace();
+      status = 'Remix created and sent to review.';
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Remix failed. Purchase or log in first.';
     }
-    await fetchMarketplace();
-    status = 'Remix created and sent to review.';
   }
 
   async function createTheme() {
@@ -151,27 +149,20 @@
       customCss: createCustomCss,
       priceCents: createPriceCents
     });
-    const response = await fetch(`${backendBaseUrl}/api/themes/create`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Theme submission failed. Log in first.');
-      return;
+    try {
+      await apiFormPost('/api/themes/create', payload);
+      createName = '';
+      createSlug = '';
+      createDescription = '';
+      createHeaderTemplate = '';
+      createBodyTemplate = '';
+      createFooterTemplate = '';
+      createCustomCss = '';
+      await fetchMarketplace();
+      status = 'Theme submitted for admin review.';
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Theme submission failed. Log in first.';
     }
-    createName = '';
-    createSlug = '';
-    createDescription = '';
-    createHeaderTemplate = '';
-    createBodyTemplate = '';
-    createFooterTemplate = '';
-    createCustomCss = '';
-    await fetchMarketplace();
-    status = 'Theme submitted for admin review.';
   }
 
   async function saveReview() {
@@ -181,20 +172,13 @@
       rating: reviewRating,
       review: reviewText
     });
-    const response = await fetch(`${backendBaseUrl}/api/theme/${selectedItem.theme.id}/review`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Review save failed.');
-      return;
+    try {
+      await apiFormPost(`/api/theme/${selectedItem.theme.id}/review`, payload);
+      await fetchMarketplace();
+      status = 'Review saved.';
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Review save failed.';
     }
-    await fetchMarketplace();
-    status = 'Review saved.';
   }
 
   async function reportTheme() {
@@ -204,28 +188,21 @@
       reason: reportReason,
       details: reportDetails
     });
-    const response = await fetch(`${backendBaseUrl}/api/theme/${selectedItem.theme.id}/report`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Report failed.');
-      return;
+    try {
+      await apiFormPost(`/api/theme/${selectedItem.theme.id}/report`, payload);
+      reportReason = '';
+      reportDetails = '';
+      await fetchMarketplace();
+      status = 'Theme reported.';
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Report failed.';
     }
-    reportReason = '';
-    reportDetails = '';
-    await fetchMarketplace();
-    status = 'Theme reported.';
   }
 
   onMount(() => {
     void (async () => {
       try {
-        await fetchMarketplace();
+        await Promise.all([fetchMarketplace(), refreshSession()]);
       } catch (error) {
         status = error instanceof Error ? error.message : 'Failed to load marketplace.';
       } finally {
@@ -246,8 +223,7 @@
     <p class="eyebrow">Theme Marketplace</p>
     <h1 class="hero-title">Buy, remix, and publish blog identities.</h1>
     <p class="lede">
-      Themes are reusable writing spaces. Free themes can be used immediately; paid themes are recorded as purchases
-      after order confirmation before they can be applied or remixed.
+      Themes are reusable writing spaces. Free themes can be applied immediately, while paid themes can be applied after purchase confirmation.
     </p>
     <div class="meta-row">
       <span class="chip">{status}</span>
@@ -309,11 +285,15 @@
         </div>
         <p class="lede">{selectedItem.theme.description ?? selectedItem.theme.slug}</p>
         <div class="action-row">
-          {#if selectedItem.owned}
+          {#if selectedItem.isAuthor}
             <button class="action-link" type="button" onclick={() => forkTheme(selectedItem)}>Remix</button>
+          {:else if selectedItem.owned}
+            <button class="action-link studio-primary-action" type="button" onclick={() => applyTheme(selectedItem.theme.id)}>
+              {currentThemeId === selectedItem.theme.id ? 'Applied' : 'Apply to blog'}
+            </button>
           {:else}
             <button class="action-link studio-primary-action" type="button" onclick={() => purchaseTheme(selectedItem.theme.id)}>
-              {selectedItem.theme.priceCents === 0 ? 'Get theme' : 'Buy theme'}
+              {selectedItem.theme.priceCents === 0 ? 'Apply free theme' : 'Buy theme'}
             </button>
           {/if}
         </div>
@@ -457,15 +437,22 @@
               {#if item.owned}
                 <span class="chip chip-live">Owned</span>
               {/if}
+              {#if currentThemeId === item.theme.id}
+                <span class="chip chip-live">Applied</span>
+              {/if}
             </div>
           </div>
           <div class="action-row">
             <button class="action-link" type="button" onclick={() => (selectedThemeId = item.theme.id)}>Preview</button>
-            {#if item.owned}
+            {#if item.isAuthor}
               <button class="action-link" type="button" onclick={() => forkTheme(item)}>Remix</button>
+            {:else if item.owned}
+              <button class="action-link studio-primary-action" type="button" onclick={() => applyTheme(item.theme.id)}>
+                {currentThemeId === item.theme.id ? 'Applied' : 'Apply'}
+              </button>
             {:else}
               <button class="action-link studio-primary-action" type="button" onclick={() => purchaseTheme(item.theme.id)}>
-                {item.theme.priceCents === 0 ? 'Get theme' : 'Buy theme'}
+                {item.theme.priceCents === 0 ? 'Apply free theme' : 'Buy theme'}
               </button>
             {/if}
           </div>

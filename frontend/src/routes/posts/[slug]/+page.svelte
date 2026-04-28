@@ -1,12 +1,10 @@
 <script lang="ts">
   import { base } from '$app/paths';
-  import { env } from '$env/dynamic/public';
+  import { apiFormPost } from '$lib/api';
   import PostCard from '$lib/components/PostCard.svelte';
   import { renderMarkdown } from '$lib/markdown';
   import { buildUserThemeStyle, escapeThemeValue, renderThemeTemplate, sanitizeThemeCss } from '$lib/theme';
   import type { ApiComment, ApiPostDetail, ApiPostSummary } from '$lib/types';
-
-  const backendBaseUrl = env.PUBLIC_YESBLOG_API_BASE_URL || '';
 
   interface Props {
     data: {
@@ -60,25 +58,6 @@
     isSubmittingComment = false;
   });
 
-  async function readErrorMessage(response: Response, fallback: string) {
-    try {
-      const payload = await response.json();
-      if (typeof payload?.message === 'string' && payload.message.trim()) {
-        return payload.message;
-      }
-    } catch {
-      try {
-        const text = await response.text();
-        if (text.trim()) {
-          return text.trim();
-        }
-      } catch {
-        return fallback;
-      }
-    }
-    return fallback;
-  }
-
   async function submitComment() {
     if (!commentContent.trim()) {
       commentStatus = 'Write a comment first.';
@@ -87,31 +66,22 @@
 
     isSubmittingComment = true;
     commentStatus = 'Posting comment…';
-    const payload = new URLSearchParams({
-      name: commentName,
-      content: commentContent
-    });
-
-    const response = await fetch(`${backendBaseUrl}/api/post/${post.slug}/comment`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString(),
-      credentials: 'include'
-    });
-
-    if (!response.ok) {
-      commentStatus = await readErrorMessage(response, 'Comment failed to post.');
+    try {
+      const data = await apiFormPost<{ comment: ApiComment }>(
+        `/api/post/${post.slug}/comment`,
+        new URLSearchParams({
+          name: commentName,
+          content: commentContent
+        })
+      );
+      comments = [...comments, data.comment];
+      commentContent = '';
+      commentStatus = 'Comment posted.';
+    } catch (error) {
+      commentStatus = error instanceof Error ? error.message : 'Comment failed to post.';
+    } finally {
       isSubmittingComment = false;
-      return;
     }
-
-    const data: { comment: ApiComment } = await response.json();
-    comments = [...comments, data.comment];
-    commentContent = '';
-    commentStatus = 'Comment posted.';
-    isSubmittingComment = false;
   }
 
   function startEditingComment(comment: ApiComment) {
@@ -132,28 +102,20 @@
     }
 
     commentStatus = 'Saving comment…';
-    const payload = new URLSearchParams({
-      content: editingCommentContent
-    });
-    const response = await fetch(`${backendBaseUrl}/api/comment/${commentId}/update`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      credentials: 'include',
-      body: payload.toString()
-    });
-
-    if (!response.ok) {
-      commentStatus = await readErrorMessage(response, 'Comment update failed.');
-      return;
+    try {
+      const data = await apiFormPost<{ comment: ApiComment }>(
+        `/api/comment/${commentId}/update`,
+        new URLSearchParams({
+          content: editingCommentContent
+        })
+      );
+      comments = comments.map((comment) => (comment.id === commentId ? data.comment : comment));
+      editingCommentId = null;
+      editingCommentContent = '';
+      commentStatus = 'Comment updated.';
+    } catch (error) {
+      commentStatus = error instanceof Error ? error.message : 'Comment update failed.';
     }
-
-    const data: { comment: ApiComment } = await response.json();
-    comments = comments.map((comment) => (comment.id === commentId ? data.comment : comment));
-    editingCommentId = null;
-    editingCommentContent = '';
-    commentStatus = 'Comment updated.';
   }
 
   async function deleteComment(commentId: number) {
@@ -161,21 +123,19 @@
     if (!confirmed) return;
 
     commentStatus = 'Deleting comment…';
-    const response = await fetch(`${backendBaseUrl}/api/comment/${commentId}/delete`, {
-      method: 'POST',
-      credentials: 'include'
-    });
-
-    if (!response.ok) {
-      commentStatus = await readErrorMessage(response, 'Comment delete failed.');
-      return;
+    try {
+      await apiFormPost<{ deletedCommentId: number }>(
+        `/api/comment/${commentId}/delete`,
+        new URLSearchParams()
+      );
+      comments = comments.filter((comment) => comment.id !== commentId);
+      if (editingCommentId === commentId) {
+        cancelEditingComment();
+      }
+      commentStatus = 'Comment deleted.';
+    } catch (error) {
+      commentStatus = error instanceof Error ? error.message : 'Comment delete failed.';
     }
-
-    comments = comments.filter((comment) => comment.id !== commentId);
-    if (editingCommentId === commentId) {
-      cancelEditingComment();
-    }
-    commentStatus = 'Comment deleted.';
   }
 </script>
 

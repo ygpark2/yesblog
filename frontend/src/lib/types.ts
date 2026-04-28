@@ -284,7 +284,6 @@ export type ApiPostSummary = {
   title: string;
   slug: string;
   excerpt: string;
-  content: string;
   tags: string[];
   createdAt: string;
   updatedAt: string;
@@ -303,6 +302,7 @@ export type ApiComment = {
 };
 
 export type ApiPostDetail = ApiPostSummary & {
+  content: string;
   viewer?: ApiUser | null;
   comments: ApiComment[];
 };

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { base } from '$app/paths';
   import { onMount } from 'svelte';
-  import { apiFetch } from '$lib/api';
+  import { apiFetch, apiFormPost } from '$lib/api';
   import { buildThemeStyle } from '$lib/theme';
   import type { ApiTheme, ThemeMarketplaceItem } from '$lib/types';
 
@@ -32,16 +32,6 @@
   const authored = $derived(items.filter((item) => item.isAuthor));
   const owned = $derived(items.filter((item) => item.owned && !item.isAuthor));
   const remixes = $derived(items.filter((item) => item.isAuthor && item.theme.parentId));
-
-  async function readErrorMessage(response: Response, fallback: string) {
-    try {
-      const payload = await response.json();
-      if (typeof payload?.message === 'string' && payload.message.trim()) return payload.message;
-    } catch {
-      return fallback;
-    }
-    return fallback;
-  }
 
   async function fetchThemes() {
     const data = await apiFetch<{ items: ThemeMarketplaceItem[] }>(fetch, '/api/me/themes');
@@ -116,39 +106,29 @@
       customCss: themeCustomCss,
       priceCents: themePriceCents
     });
-    const response = await fetch(`/api/theme/${editingThemeId}/update`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Theme update failed.');
+    try {
+      await apiFormPost(`/api/theme/${editingThemeId}/update`, payload);
+      resetForm();
+      await fetchThemes();
+      status = 'Theme updated and moved back to review.';
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Theme update failed.';
+    } finally {
       saving = false;
-      return;
     }
-    resetForm();
-    await fetchThemes();
-    saving = false;
-    status = 'Theme updated and moved back to review.';
   }
 
   async function deleteTheme(theme: ApiTheme) {
     if (!window.confirm(`Delete ${theme.name}? This cannot be undone.`)) return;
     status = 'Deleting theme...';
-    const response = await fetch(`/api/theme/${theme.id}/delete`, {
-      method: 'POST',
-      credentials: 'include'
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Theme delete failed.');
-      return;
+    try {
+      await apiFormPost(`/api/theme/${theme.id}/delete`, new URLSearchParams());
+      if (editingThemeId === theme.id) resetForm();
+      await fetchThemes();
+      status = 'Theme deleted.';
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Theme delete failed.';
     }
-    if (editingThemeId === theme.id) resetForm();
-    await fetchThemes();
-    status = 'Theme deleted.';
   }
 </script>
 

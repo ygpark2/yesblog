@@ -31,7 +31,7 @@ spec = withApp $ do
             _ <- createArticleWithContent writerId "Existing Post" "existing body" "same-slug" False []
             authenticateAs writerEntity
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl ApiEditorSaveR
                 addPostParam "title" "New Saved Post"
@@ -57,7 +57,7 @@ spec = withApp $ do
             Entity articleId _ <- createArticleWithContent writerId "Old Draft" "old body" "old-draft" True ["old"]
             authenticateAs writerEntity
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl ApiEditorAutosaveR
                 addPostParam "articleId" (tshow $ fromSqlKey articleId)
@@ -86,7 +86,7 @@ spec = withApp $ do
             _ <- createComment articleId "reader" "remove me"
             authenticateAs writerEntity
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl $ ApiEditorDeleteR articleId
 
@@ -108,7 +108,7 @@ spec = withApp $ do
                 ]
             authenticateAs writerEntity
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl ApiEditorSaveR
                 addPostParam "title" "Members Dispatch"

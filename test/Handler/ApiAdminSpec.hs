@@ -31,7 +31,7 @@ spec = withApp $ do
             _ <- createComment articleId "reader" "delete comment"
             authenticateAs adminEntity
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl $ ApiAdminArticleDeleteR articleId
 
@@ -51,7 +51,7 @@ spec = withApp $ do
             _ <- createComment articleId "reader" "member comment"
             authenticateAs adminEntity
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl $ ApiAdminUserDeleteR memberId
 
@@ -62,7 +62,7 @@ spec = withApp $ do
             assertEq "deleted user flag" (isNothing deletedUser) True
             assertEq "deleted article flag" (isNothing deletedArticle) True
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl $ ApiAdminUserDeleteR adminId
 
@@ -98,13 +98,13 @@ spec = withApp $ do
                 }
             authenticateAs buyerEntity
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl $ ApiThemePurchaseR themeId
 
             statusIs 200
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl $ ApiThemePurchaseConfirmR themeId
                 addPostParam "userId" (tshow $ fromSqlKey buyerId)
@@ -122,7 +122,7 @@ spec = withApp $ do
                 ]
 
             authenticateAs memberEntity
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl $ ApiUserMembershipR "membership-writer"
                 addPostParam "mode" "request"
@@ -135,7 +135,7 @@ spec = withApp $ do
                     assertEq "membership order status" (membershipOrderStatus order) "pending"
 
                     authenticateAs adminEntity
-                    request $ do
+                    requestWithCsrf $ do
                         setMethod "POST"
                         setUrl $ ApiAdminMembershipOrderUpdateR orderId
                         addPostParam "status" "paid"
@@ -160,7 +160,7 @@ spec = withApp $ do
                 ]
 
             authenticateAs memberEntity
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl $ ApiUserMembershipR "membership-fail-writer"
                 addPostParam "mode" "request"
@@ -171,7 +171,7 @@ spec = withApp $ do
             case membershipOrders of
                 [Entity orderId _] -> do
                     authenticateAs adminEntity
-                    request $ do
+                    requestWithCsrf $ do
                         setMethod "POST"
                         setUrl $ ApiAdminMembershipOrderUpdateR orderId
                         addPostParam "status" "failed"
@@ -197,7 +197,9 @@ spec = withApp $ do
                 }
 
             authenticateAs memberEntity
-            get ApiMeMembershipsR
+            requestWithCsrf $ do
+                setMethod "POST"
+                setUrl ApiMeMembershipRefreshR
             statusIs 200
 
             renewalOrders <- runDB $ selectList [MembershipOrderMember ==. memberId, MembershipOrderStatus ==. "pending"] []
@@ -229,13 +231,15 @@ spec = withApp $ do
                 }
 
             authenticateAs memberEntity
-            get ApiMeMembershipsR
+            requestWithCsrf $ do
+                setMethod "POST"
+                setUrl ApiMeMembershipRefreshR
             statusIs 200
 
             renewalOrders <- runDB $ selectList [MembershipOrderMembership ==. membershipId, MembershipOrderStatus ==. "pending"] []
             case renewalOrders of
                 [Entity orderId _] -> do
-                    request $ do
+                    requestWithCsrf $ do
                         setMethod "POST"
                         setUrl $ ApiMeMembershipOrderUpdateR orderId
                         addPostParam "mode" "cancel"
@@ -251,7 +255,7 @@ spec = withApp $ do
                             assertEq "auto renew disabled after cancellation" (membershipAutoRenew cancelledMembership) False
                         _ -> liftIO $ expectationFailure "expected cancelled order and membership to exist"
 
-                    request $ do
+                    requestWithCsrf $ do
                         setMethod "POST"
                         setUrl $ ApiMeMembershipOrderUpdateR orderId
                         addPostParam "mode" "retry"
@@ -266,3 +270,30 @@ spec = withApp $ do
                             assertEq "membership moved back to pending after retry" (membershipStatus retriedMembership) "pending"
                         _ -> liftIO $ expectationFailure "expected retried order and membership to exist"
                 _ -> liftIO $ expectationFailure "expected one pending renewal order before cancel/retry"
+
+        it "rejects unsafe theme templates" $ do
+            userEntity@(Entity userId _) <- createUser "theme-template-author"
+            now <- liftIO getCurrentTime
+            runDB $ update userId [UserPlan =. "designer-pro", UserPlanExpiresAt =. Just now]
+            authenticateAs userEntity
+
+            requestWithCsrf $ do
+                setMethod "POST"
+                setUrl ApiThemeCreateR
+                addPostParam "name" "Unsafe Theme"
+                addPostParam "slug" "unsafe-theme"
+                addPostParam "description" "theme"
+                addPostParam "backgroundColor" "#ffffff"
+                addPostParam "surfaceColor" "#f5f5f5"
+                addPostParam "textColor" "#111111"
+                addPostParam "accentColor" "#ffcc00"
+                addPostParam "headingFont" "Space Grotesk"
+                addPostParam "bodyFont" "Space Grotesk"
+                addPostParam "headerTemplate" "<script>alert(1)</script>"
+                addPostParam "bodyTemplate" "<article>{{post.content}}</article>"
+                addPostParam "footerTemplate" "<footer>safe</footer>"
+                addPostParam "customCss" ""
+                addPostParam "priceCents" "0"
+
+            statusIs 400
+            bodyContains "safe structural HTML"

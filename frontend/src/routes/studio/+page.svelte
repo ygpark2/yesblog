@@ -2,7 +2,7 @@
   import { base } from '$app/paths';
   import { env } from '$env/dynamic/public';
   import { onMount } from 'svelte';
-  import { apiFormPost } from '$lib/api';
+  import { apiFetch, apiFormPost } from '$lib/api';
   import { renderMarkdown } from '$lib/markdown';
   import type { ApiPostSummary, EditorArticle, EditorBootstrap, EditorMine, EditorSaveResponse } from '$lib/types';
 
@@ -219,57 +219,36 @@
   }
 
   async function fetchBootstrap() {
-    const response = await fetch(`${backendBaseUrl}/api/editor/bootstrap`, {
-      credentials: 'include'
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to load editor bootstrap');
-    }
-
-    bootstrap = await response.json();
+    bootstrap = await apiFetch<EditorBootstrap>(fetch, '/api/editor/bootstrap');
     syncImageDraftDescriptions();
   }
 
   async function fetchMine() {
-    const response = await fetch(`${backendBaseUrl}/api/editor/mine`, {
-      credentials: 'include'
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to load article list');
-    }
-
-    mine = await response.json();
+    mine = await apiFetch<EditorMine>(fetch, '/api/editor/mine');
   }
 
   async function loadArticle(nextArticleId: string) {
-    const response = await fetch(`${backendBaseUrl}/api/editor/article/${nextArticleId}`, {
-      credentials: 'include'
-    });
-
-    if (!response.ok) {
+    try {
+      const data = await apiFetch<{ item: EditorArticle }>(fetch, `/api/editor/article/${nextArticleId}`);
+      const item = data.item;
+      selectedArticleId = String(item.id);
+      articleId = String(item.id);
+      title = item.title;
+      slug = item.slug;
+      content = item.content;
+      tags = item.tags.join(' ');
+      draft = item.draft;
+      visibility = (item.visibility as 'public' | 'private' | 'members') ?? 'public';
+      publishAt = item.publishAt ? item.publishAt.slice(0, 16) : '';
+      permalink = item.draft ? '' : `${base}/posts/${item.slug}`;
+      slugTouched = true;
+      status = item.draft ? 'Draft loaded' : 'Published article loaded';
+      loginRequired = false;
+      replaceStudioHistory(`${base}/studio?articleId=${item.id}`);
+      markSavedState();
+    } catch {
       status = 'Failed to load article';
-      return;
     }
-
-    const data: { item: EditorArticle } = await response.json();
-    const item = data.item;
-    selectedArticleId = String(item.id);
-    articleId = String(item.id);
-    title = item.title;
-    slug = item.slug;
-    content = item.content;
-    tags = item.tags.join(' ');
-    draft = item.draft;
-    visibility = (item.visibility as 'public' | 'private' | 'members') ?? 'public';
-    publishAt = item.publishAt ? item.publishAt.slice(0, 16) : '';
-    permalink = item.draft ? '' : `${base}/posts/${item.slug}`;
-    slugTouched = true;
-    status = item.draft ? 'Draft loaded' : 'Published article loaded';
-    loginRequired = false;
-    replaceStudioHistory(`${base}/studio?articleId=${item.id}`);
-    markSavedState();
   }
 
   function startFreshDraft() {
@@ -438,25 +417,6 @@
     return null;
   }
 
-  async function readErrorMessage(response: Response, fallback: string) {
-    try {
-      const payload = await response.json();
-      if (typeof payload?.message === 'string' && payload.message.trim()) {
-        return payload.message;
-      }
-    } catch {
-      try {
-        const text = await response.text();
-        if (text.trim()) {
-          return text.trim();
-        }
-      } catch {
-        return fallback;
-      }
-    }
-    return fallback;
-  }
-
   function validateUploadFile(file: File) {
     if (!allowedUploadTypes.includes(file.type)) {
       status = 'Use jpg, png, gif, webp, or svg images only.';
@@ -483,36 +443,29 @@
       payload.set('description', uploadDescription.trim());
     }
 
-    const response = await fetch(`${backendBaseUrl}/api/editor/upload`, {
-      method: 'POST',
-      credentials: 'include',
-      body: payload
-    });
+    try {
+      const data = await apiFormPost<{ image: EditorBootstrap['images'][number] }>('/api/editor/upload', payload);
+      const image = data.image;
+      bootstrap = bootstrap
+        ? {
+            ...bootstrap,
+            images: [image, ...bootstrap.images].slice(0, 12)
+          }
+        : bootstrap;
+      syncImageDraftDescriptions();
 
-    if (!response.ok) {
-      status = await readErrorMessage(response, `${sourceLabel} upload failed`);
-      return;
+      if (uploadInsertAfter && image?.markdown) {
+        insertMarkdown(image.markdown);
+        status = `${sourceLabel} uploaded and inserted`;
+      } else {
+        status = `${sourceLabel} uploaded`;
+      }
+
+      uploadFile = null;
+      uploadDescription = '';
+    } catch (error) {
+      status = error instanceof Error ? error.message : `${sourceLabel} upload failed`;
     }
-
-    const data = await response.json();
-    const image = data.image;
-    bootstrap = bootstrap
-      ? {
-          ...bootstrap,
-          images: [image, ...bootstrap.images].slice(0, 12)
-        }
-      : bootstrap;
-    syncImageDraftDescriptions();
-
-    if (uploadInsertAfter && image?.markdown) {
-      insertMarkdown(image.markdown);
-      status = `${sourceLabel} uploaded and inserted`;
-    } else {
-      status = `${sourceLabel} uploaded`;
-    }
-
-    uploadFile = null;
-    uploadDescription = '';
   }
 
   async function saveImageDescription(imageId: number) {
@@ -520,53 +473,41 @@
     const payload = new URLSearchParams({
       description: imageDraftDescriptions[imageId] ?? ''
     });
-    const response = await fetch(`${backendBaseUrl}/api/editor/image/${imageId}/update`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Image note save failed');
-      return;
+    try {
+      const data = await apiFormPost<{ image: EditorBootstrap['images'][number] }>(
+        `/api/editor/image/${imageId}/update`,
+        payload
+      );
+      if (bootstrap) {
+        bootstrap = {
+          ...bootstrap,
+          images: bootstrap.images.map((image) => (image.id === imageId ? data.image : image))
+        };
+        syncImageDraftDescriptions();
+      }
+      status = 'Image note saved';
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Image note save failed';
     }
-
-    const data = await response.json();
-    if (bootstrap) {
-      bootstrap = {
-        ...bootstrap,
-        images: bootstrap.images.map((image) => (image.id === imageId ? data.image : image))
-      };
-      syncImageDraftDescriptions();
-    }
-    status = 'Image note saved';
   }
 
   async function deleteImage(imageId: number) {
     const confirmed = window.confirm('Delete this image from the shared library?');
     if (!confirmed) return;
     status = 'Deleting image…';
-    const response = await fetch(`${backendBaseUrl}/api/editor/image/${imageId}/delete`, {
-      method: 'POST',
-      credentials: 'include'
-    });
-
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Image delete failed');
-      return;
+    try {
+      await apiFormPost(`/api/editor/image/${imageId}/delete`, new URLSearchParams());
+      if (bootstrap) {
+        bootstrap = {
+          ...bootstrap,
+          images: bootstrap.images.filter((image) => image.id !== imageId)
+        };
+        syncImageDraftDescriptions();
+      }
+      status = 'Image deleted';
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Image delete failed';
     }
-
-    if (bootstrap) {
-      bootstrap = {
-        ...bootstrap,
-        images: bootstrap.images.filter((image) => image.id !== imageId)
-      };
-      syncImageDraftDescriptions();
-    }
-    status = 'Image deleted';
   }
 
   function handleUploadDragOver(event: DragEvent) {

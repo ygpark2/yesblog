@@ -96,12 +96,20 @@ getPostgresqlTables = do
 
 authenticateAs :: Entity User -> YesodExample App ()
 authenticateAs (Entity _ u) = do
-    request $ do
+    requestWithCsrf $ do
         setMethod "POST"
         addPostParam "ident" $ userIdent u
         addPostParam "password" defaultTestPassword
         setUrl ApiAuthLoginR
     statusIs 200
+
+requestWithCsrf :: RequestBuilder App () -> YesodExample App ()
+requestWithCsrf builder = do
+    get ApiSessionR
+    statusIs 200
+    request $ do
+        addTokenFromCookie
+        builder
 
 -- | Create a user.  The dummy email entry helps to confirm that foreign-key
 -- checking is switched off in wipeDB for those database backends which need it.

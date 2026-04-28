@@ -153,7 +153,6 @@ getApiMeDomainsR = do
 getApiMeMembershipsR :: Handler Value
 getApiMeMembershipsR = do
     (userId, user) <- requireAuthPair
-    refreshMembershipLifecycles userId
     received <- runDB $ selectList [MembershipCreator ==. userId] [Desc MembershipUpdatedAt]
     outgoing <- runDB $ selectList [MembershipMember ==. userId] [Desc MembershipUpdatedAt]
     creatorMap <- loadUsersByIds $ map (membershipCreator . entityVal) outgoing
@@ -166,7 +165,6 @@ getApiMeMembershipsR = do
 getApiMeMembershipOrdersR :: Handler Value
 getApiMeMembershipOrdersR = do
     (userId, _user) <- requireAuthPair
-    refreshMembershipLifecycles userId
     orders <- runDB $ selectList [MembershipOrderMember ==. userId] [Desc MembershipOrderCreatedAt]
     membershipMap <- loadMembershipMap $ map (membershipOrderMembership . entityVal) orders
     userMap <- loadUsersByIds $
@@ -174,6 +172,15 @@ getApiMeMembershipOrdersR = do
         map (membershipOrderMember . entityVal) orders
     returnJson $ object
         [ "items" .= map (membershipOrderValue membershipMap userMap) orders
+        ]
+
+postApiMeMembershipRefreshR :: Handler Value
+postApiMeMembershipRefreshR = do
+    (userId, _user) <- requireAuthPair
+    refreshedCount <- refreshMembershipLifecycles userId
+    returnJson $ object
+        [ "refreshed" .= True
+        , "count" .= refreshedCount
         ]
 
 postApiMeMembershipOrderUpdateR :: MembershipOrderId -> Handler Value
@@ -392,9 +399,14 @@ postApiUserMembershipR ident = do
     when (userMembershipPriceCents creator <= 0) $
         apiError status400 "This writer has not enabled paid memberships."
     mMembership <- runDB $ getBy $ UniqueMembership creatorId memberId
+    refreshedMembership <- case mMembership of
+        Just entity@(Entity membershipId membership) -> do
+            _ <- refreshMembershipLifecycle now membershipId membership
+            runDB $ getBy $ UniqueMembership creatorId memberId
+        Nothing -> pure Nothing
     case mode of
         "cancel" -> do
-            Entity existingId existing <- maybe (apiError status400 "No membership request was found.") pure mMembership
+            Entity existingId existing <- maybe (apiError status400 "No membership request was found.") pure refreshedMembership
             runDB $ update existingId
                 [ MembershipStatus =. "cancelled"
                 , MembershipUpdatedAt =. now
@@ -411,7 +423,7 @@ postApiUserMembershipR ident = do
                 [ "membership" .= membershipValue (Just creator) (Just memberUser) (Entity existingId updated)
                 ]
         _ -> do
-            membershipId <- case mMembership of
+            membershipId <- case refreshedMembership of
                 Just (Entity existingId existing) -> do
                     when (membershipStatusActiveAt now existing) $
                         apiError status400 "You already have an active membership."
@@ -470,7 +482,6 @@ postApiMeThemeR :: Handler Value
 postApiMeThemeR = do
     (userId, _user) <- requireAuthPair
     rawThemeId <- runInputPost $ fromMaybe "" <$> iopt textField "themeId"
-    rawOverrides <- runInputPost $ fromMaybe "" <$> iopt textField "themeOverrides"
     mThemeId <- parseOptionalThemeId rawThemeId
     case mThemeId of
         Nothing -> pure ()
@@ -484,7 +495,7 @@ postApiMeThemeR = do
                 _ -> apiError status400 "Select an active theme."
     runDB $ update userId
         [ UserTheme =. mThemeId
-        , UserThemeOverrides =. cleanOptionalText (Just rawOverrides)
+        , UserThemeOverrides =. Nothing
         ]
     updatedUser <- runDB $ get404 userId
     updatedTheme <- loadUserTheme updatedUser
@@ -1171,6 +1182,10 @@ readUserThemeInput userId mParentThemeId now = do
         apiError status400 "Theme name is required."
     when (slug == "") $
         apiError status400 "Theme slug is required."
+    validateThemeHtmlTemplate rawHeaderTemplate
+    validateThemeHtmlTemplate rawBodyTemplate
+    validateThemeHtmlTemplate rawFooterTemplate
+    validateThemeCss rawCustomCss
     pure Theme
         { themeName = name
         , themeSlug = slug
@@ -1332,7 +1347,7 @@ normalizeMembershipOrderStatus rawStatus =
         then status
         else "pending"
 
-refreshMembershipLifecycles :: UserId -> Handler ()
+refreshMembershipLifecycles :: UserId -> Handler Int
 refreshMembershipLifecycles userId = do
     now <- liftIO getCurrentTime
     createdMemberships <- runDB $ selectList [MembershipCreator ==. userId] [Desc MembershipUpdatedAt]
@@ -1341,34 +1356,41 @@ refreshMembershipLifecycles userId = do
             L.nubBy
                 (\left right -> entityKey left == entityKey right)
                 (createdMemberships <> joinedMemberships)
-    forM_ memberships $ \(Entity membershipId membership) -> do
-        when (membershipStatus membership == "active" && maybe False (<= now) (membershipExpiresAt membership)) $ do
-            pendingRenewal <- runDB $ selectFirst
-                [ MembershipOrderMembership ==. membershipId
-                , MembershipOrderStatus ==. "pending"
-                ]
-                [Desc MembershipOrderCreatedAt]
-            if membershipAutoRenew membership
-                then do
-                    when (isNothing pendingRenewal) $
-                        runDB $ insert_ MembershipOrder
-                            { membershipOrderMembership = membershipId
-                            , membershipOrderCreator = membershipCreator membership
-                            , membershipOrderMember = membershipMember membership
-                            , membershipOrderAmountCents = membershipPriceCents membership
-                            , membershipOrderStatus = "pending"
-                            , membershipOrderProvider = Just "membership-renewal"
-                            , membershipOrderProviderOrderId = Nothing
-                            , membershipOrderAdminNote = Nothing
-                            , membershipOrderCreatedAt = now
-                            , membershipOrderPaidAt = Nothing
-                            }
-                    runDB $ update membershipId
-                        [ MembershipStatus =. "pending"
-                        , MembershipUpdatedAt =. now
-                        ]
-                else
-                    runDB $ update membershipId
-                        [ MembershipStatus =. "expired"
-                        , MembershipUpdatedAt =. now
-                        ]
+    changes <- forM memberships $ \(Entity membershipId membership) ->
+        refreshMembershipLifecycle now membershipId membership
+    pure $ length $ filter id changes
+
+refreshMembershipLifecycle :: UTCTime -> MembershipId -> Membership -> Handler Bool
+refreshMembershipLifecycle now membershipId membership
+    | membershipStatus membership /= "active" = pure False
+    | not (maybe False (<= now) (membershipExpiresAt membership)) = pure False
+    | membershipAutoRenew membership = do
+        pendingRenewal <- runDB $ selectFirst
+            [ MembershipOrderMembership ==. membershipId
+            , MembershipOrderStatus ==. "pending"
+            ]
+            [Desc MembershipOrderCreatedAt]
+        when (isNothing pendingRenewal) $
+            runDB $ insert_ MembershipOrder
+                { membershipOrderMembership = membershipId
+                , membershipOrderCreator = membershipCreator membership
+                , membershipOrderMember = membershipMember membership
+                , membershipOrderAmountCents = membershipPriceCents membership
+                , membershipOrderStatus = "pending"
+                , membershipOrderProvider = Just "membership-renewal"
+                , membershipOrderProviderOrderId = Nothing
+                , membershipOrderAdminNote = Nothing
+                , membershipOrderCreatedAt = now
+                , membershipOrderPaidAt = Nothing
+                }
+        runDB $ update membershipId
+            [ MembershipStatus =. "pending"
+            , MembershipUpdatedAt =. now
+            ]
+        pure True
+    | otherwise = do
+        runDB $ update membershipId
+            [ MembershipStatus =. "expired"
+            , MembershipUpdatedAt =. now
+            ]
+        pure True

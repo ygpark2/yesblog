@@ -13,7 +13,7 @@ spec = withApp $ do
             _ <- createArticleWithContent authorId "Visible Svelte Post" "SvelteKit body text" "visible-svelte-post" False ["svelte", "frontend"]
             _ <- createArticleWithContent authorId "Draft Svelte Post" "should stay hidden" "draft-svelte-post" True ["svelte"]
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "GET"
                 setUrl ApiPostsR
                 addGetParam "author" "public-author"
@@ -23,6 +23,7 @@ spec = withApp $ do
             statusIs 200
             bodyContains "\"title\":\"Visible Svelte Post\""
             bodyContains "\"author\":\"public-author\""
+            bodyNotContains "\"content\":\"SvelteKit body text\""
 
         it "returns published post details and hides drafts" $ do
             Entity authorId _ <- createUser "detail-author"
@@ -47,7 +48,7 @@ spec = withApp $ do
             userEntity <- createUser "commenter"
             authenticateAs userEntity
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl $ ApiPostCommentR "commentable-post"
                 addPostParam "content" "First comment"
@@ -59,7 +60,7 @@ spec = withApp $ do
             assertEq "comment count" (length comments) 1
             let [Entity commentId _] = comments
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl $ ApiCommentUpdateR commentId
                 addPostParam "content" "Updated comment"
@@ -73,7 +74,7 @@ spec = withApp $ do
                 Just updatedComment ->
                     assertEq "updated comment content" (commentContent updatedComment) "Updated comment"
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl $ ApiCommentDeleteR commentId
 

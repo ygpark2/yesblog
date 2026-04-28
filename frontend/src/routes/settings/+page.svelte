@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { apiFetch, apiFormPost } from '$lib/api';
-  import { buildThemeStyle, parseThemeOverrides, stringifyThemeOverrides } from '$lib/theme';
+  import { apiFetch, apiFormPost, apiPost } from '$lib/api';
+  import { buildThemeStyle } from '$lib/theme';
   import type { ApiMe, ApiMeMemberships, ApiTheme, ApiUser, CustomDomainItem, MembershipItem, MembershipOrderItem } from '$lib/types';
 
   let ident = $state('');
@@ -27,28 +27,14 @@
   let membershipActionId = $state<number | null>(null);
   let membershipOrderActionId = $state<number | null>(null);
   let selectedThemeId = $state('');
-  let backgroundColor = $state('');
-  let surfaceColor = $state('');
-  let textColor = $state('');
-  let accentColor = $state('');
-  let headingFont = $state('');
-  let bodyFont = $state('');
 
   const selectedTheme = $derived(themes.find((theme) => String(theme.id) === selectedThemeId) ?? null);
-  const previewThemeStyle = $derived(
-    buildThemeStyle(selectedTheme, stringifyThemeOverrides({
-      backgroundColor,
-      surfaceColor,
-      textColor,
-      accentColor,
-      headingFont,
-      bodyFont
-    }))
-  );
+  const previewThemeStyle = $derived(buildThemeStyle(selectedTheme));
 
   onMount(() => {
     void (async () => {
       try {
+        await apiPost<{ refreshed: boolean; count: number }>('/api/me/membership/refresh');
         const [me, themeData, memberships, membershipOrdersData] = await Promise.all([
           apiFetch<ApiMe>(fetch, '/api/me'),
           apiFetch<{ items: ApiTheme[] }>(fetch, '/api/themes'),
@@ -67,9 +53,8 @@
         membershipOrders = membershipOrdersData.items ?? [];
         customDomain = domains[0]?.domain ?? '';
         selectedThemeId = me.user.themeId ? String(me.user.themeId) : '';
-        hydrateThemeFields(me.user);
         status = 'Update your profile details';
-        themeStatus = themes.length ? 'Choose a base theme, then override the parts you want.' : 'No active themes are available.';
+        themeStatus = themes.length ? 'Choose a theme for your blog. Free themes apply immediately, and paid themes appear here after purchase.' : 'No themes are available in your library yet.';
         planStatus = plan === 'free' ? 'Upgrade to unlock scheduling, private visibility, and custom domains.' : 'Pro publishing features are active.';
         membershipStatus =
           membershipPriceCents > 0
@@ -87,26 +72,6 @@
       }
     })();
   });
-
-  function hydrateThemeFields(user: ApiUser) {
-    const overrides = parseThemeOverrides(user.themeOverrides);
-    backgroundColor = overrides.backgroundColor ?? user.theme?.backgroundColor ?? '';
-    surfaceColor = overrides.surfaceColor ?? user.theme?.surfaceColor ?? '';
-    textColor = overrides.textColor ?? user.theme?.textColor ?? '';
-    accentColor = overrides.accentColor ?? user.theme?.accentColor ?? '';
-    headingFont = overrides.headingFont ?? user.theme?.headingFont ?? '';
-    bodyFont = overrides.bodyFont ?? user.theme?.bodyFont ?? '';
-  }
-
-  function useSelectedThemeDefaults() {
-    if (!selectedTheme) return;
-    backgroundColor = selectedTheme.backgroundColor;
-    surfaceColor = selectedTheme.surfaceColor;
-    textColor = selectedTheme.textColor;
-    accentColor = selectedTheme.accentColor;
-    headingFont = selectedTheme.headingFont ?? '';
-    bodyFont = selectedTheme.bodyFont ?? '';
-  }
 
   async function saveSettings() {
     saving = true;
@@ -187,20 +152,11 @@
     themeStatus = 'Saving theme...';
     try {
       const payload = new URLSearchParams({
-        themeId: selectedThemeId,
-        themeOverrides: stringifyThemeOverrides({
-          backgroundColor,
-          surfaceColor,
-          textColor,
-          accentColor,
-          headingFont,
-          bodyFont
-        })
+        themeId: selectedThemeId
       });
       const data = await apiFormPost<{ user: ApiUser }>('/api/me/theme', payload);
-      selectedThemeId = data.user.themeId ? String(data.user.themeId) : selectedThemeId;
-      hydrateThemeFields(data.user);
-      themeStatus = 'Theme saved';
+      selectedThemeId = data.user.themeId ? String(data.user.themeId) : '';
+      themeStatus = selectedThemeId ? 'Theme applied.' : 'Theme cleared.';
     } catch (error) {
       themeStatus = error instanceof Error ? error.message : 'Theme update failed';
     } finally {
@@ -485,14 +441,14 @@
     <div class="meta-row">
       <div>
         <p class="eyebrow">Theme</p>
-        <h2 class="section-title">Personalize your blog theme.</h2>
+        <h2 class="section-title">Choose the theme for your blog.</h2>
       </div>
       <span class="chip">{themeStatus}</span>
     </div>
 
     <label class="stack" style="gap: 8px;">
-      <span class="eyebrow">Base theme</span>
-      <select class="studio-select" bind:value={selectedThemeId} onchange={useSelectedThemeDefaults}>
+      <span class="eyebrow">Theme</span>
+      <select class="studio-select" bind:value={selectedThemeId}>
         <option value="">Use site default</option>
         {#each themes as theme}
           <option value={theme.id}>{theme.name}</option>
@@ -500,47 +456,26 @@
       </select>
     </label>
 
-    <div class="studio-upload-grid grid">
-      <label class="stack" style="gap: 8px;">
-        <span class="eyebrow">Background color</span>
-        <input class="search-input studio-input" bind:value={backgroundColor} placeholder="#f8f0dc" />
-      </label>
-      <label class="stack" style="gap: 8px;">
-        <span class="eyebrow">Surface color</span>
-        <input class="search-input studio-input" bind:value={surfaceColor} placeholder="#fffef7" />
-      </label>
-      <label class="stack" style="gap: 8px;">
-        <span class="eyebrow">Text color</span>
-        <input class="search-input studio-input" bind:value={textColor} placeholder="#111111" />
-      </label>
-      <label class="stack" style="gap: 8px;">
-        <span class="eyebrow">Accent color</span>
-        <input class="search-input studio-input" bind:value={accentColor} placeholder="#ffe11a" />
-      </label>
-      <label class="stack" style="gap: 8px;">
-        <span class="eyebrow">Heading font</span>
-        <input class="search-input studio-input" bind:value={headingFont} placeholder="Cormorant Garamond" />
-      </label>
-      <label class="stack" style="gap: 8px;">
-        <span class="eyebrow">Body font</span>
-        <input class="search-input studio-input" bind:value={bodyFont} placeholder="Space Grotesk" />
-      </label>
-    </div>
-
     <article class="hero-card stack themed-page" style={previewThemeStyle}>
       <p class="eyebrow">Preview</p>
-      <h3 class="post-title">Your themed writing surface</h3>
-      <p class="lede">This preview uses your selected base theme plus custom overrides.</p>
+      <h3 class="post-title">{selectedTheme?.name ?? 'Default writing surface'}</h3>
+      <p class="lede">
+        {selectedTheme?.description ?? 'Use the default blog appearance, or apply a theme from your library.'}
+      </p>
       <div class="meta-row">
         <span class="chip">Accent chip</span>
         <span class="chip">Readable text</span>
+        {#if selectedTheme}
+          <span class="chip">{selectedTheme.priceCents === 0 ? 'Free' : `$${(selectedTheme.priceCents / 100).toFixed(2)}`}</span>
+        {/if}
       </div>
     </article>
 
     <div class="action-row">
       <button class="action-link studio-primary-action" type="button" disabled={savingTheme} onclick={saveThemeSettings}>
-        {savingTheme ? 'Saving...' : 'Save theme'}
+        {savingTheme ? 'Saving...' : 'Apply theme'}
       </button>
+      <a class="action-link" href="/app/themes">Open marketplace</a>
     </div>
   </section>
 </section>

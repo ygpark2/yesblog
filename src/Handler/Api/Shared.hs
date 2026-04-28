@@ -13,6 +13,7 @@ import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import qualified Data.Text.Read as TR
+import qualified Data.Set as Set
 import Data.Time (NominalDiffTime, defaultTimeLocale, diffUTCTime, formatTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Network.HTTP.Types.Status (Status, status400, status413, status415, status429)
@@ -76,66 +77,31 @@ userHasDesignerProAt now user = isDesignerProPlan (effectiveUserPlanAt now user)
 
 membershipStatusActiveAt :: UTCTime -> Membership -> Bool
 membershipStatusActiveAt now membership =
-    membershipStatus membership == "active" &&
+    effectiveMembershipStatusAt now membership == "active" &&
     case membershipExpiresAt membership of
         Nothing -> True
         Just expiresAt -> expiresAt > now
 
+effectiveMembershipStatusAt :: UTCTime -> Membership -> Text
+effectiveMembershipStatusAt now membership
+    | membershipStatus membership /= "active" = membershipStatus membership
+    | maybe False (<= now) (membershipExpiresAt membership) =
+        if membershipAutoRenew membership then "pending" else "expired"
+    | otherwise = "active"
+
 lookupMembershipFor :: UTCTime -> UserId -> UserId -> Handler (Maybe (Entity Membership))
 lookupMembershipFor now creatorId memberId = do
-    refreshMembershipEntity now creatorId memberId
     mMembership <- runDB $ getBy $ UniqueMembership creatorId memberId
     pure $
         case mMembership of
-            Just entity@(Entity _ membership)
-                | membershipStatusActiveAt now membership -> Just entity
-                | membershipStatus membership == "pending" -> Just entity
-                | otherwise -> Just entity
+            Just (Entity membershipId membership) ->
+                Just (Entity membershipId (membership { membershipStatus = effectiveMembershipStatusAt now membership }))
             Nothing -> Nothing
 
 hasActiveMembershipFor :: UTCTime -> UserId -> UserId -> Handler Bool
 hasActiveMembershipFor now creatorId memberId = do
-    refreshMembershipEntity now creatorId memberId
     mMembership <- runDB $ getBy $ UniqueMembership creatorId memberId
     pure $ maybe False (membershipStatusActiveAt now . entityVal) mMembership
-
-refreshMembershipEntity :: UTCTime -> UserId -> UserId -> Handler ()
-refreshMembershipEntity now creatorId memberId = do
-    mMembership <- runDB $ getBy $ UniqueMembership creatorId memberId
-    case mMembership of
-        Just (Entity membershipId membership)
-            | membershipStatus membership == "active" && maybe False (<= now) (membershipExpiresAt membership) -> do
-                pendingRenewal <- runDB $ selectFirst
-                    [ MembershipOrderMembership ==. membershipId
-                    , MembershipOrderStatus ==. "pending"
-                    ]
-                    [Desc MembershipOrderCreatedAt]
-                if membershipAutoRenew membership
-                    then do
-                        when (isNothing pendingRenewal) $
-                            runDB $ insert_ MembershipOrder
-                                { membershipOrderMembership = membershipId
-                                , membershipOrderCreator = creatorId
-                                , membershipOrderMember = memberId
-                                , membershipOrderAmountCents = membershipPriceCents membership
-                                , membershipOrderStatus = "pending"
-                                , membershipOrderProvider = Just "membership-renewal"
-                                , membershipOrderProviderOrderId = Nothing
-                                , membershipOrderAdminNote = Nothing
-                                , membershipOrderCreatedAt = now
-                                , membershipOrderPaidAt = Nothing
-                                }
-                        runDB $ update membershipId
-                            [ MembershipStatus =. "pending"
-                            , MembershipUpdatedAt =. now
-                            ]
-                    else
-                        runDB $ update membershipId
-                            [ MembershipStatus =. "expired"
-                            , MembershipUpdatedAt =. now
-                            ]
-            | otherwise -> pure ()
-        Nothing -> pure ()
 
 selectPublishedArticles :: Maybe Text -> Maybe Text -> Maybe Text -> Handler [Entity Article]
 selectPublishedArticles mTag mAuthorIdent mQuery = do
@@ -155,6 +121,50 @@ selectPublishedArticles mTag mAuthorIdent mQuery = do
             taggedArticleIds <- runDB $
                 map (tagArticle . entityVal) <$> selectList [TagName ==. tagName'] []
             pure $ filter (\entity -> entityKey entity `elem` taggedArticleIds) queryFilteredArticles
+
+selectPublishedArticlesPage :: Maybe Text -> Maybe Text -> Maybe Text -> Int -> Int -> Handler ([Entity Article], Int)
+selectPublishedArticlesPage mTag mAuthorIdent mQuery page limit = do
+    now <- liftIO getCurrentTime
+    mAuthorId <- case mAuthorIdent of
+        Nothing -> pure Nothing
+        Just ident -> entityKey <$> runDB (getBy404 $ UniqueUser ident) >>= pure . Just
+    taggedArticleIds <- case mTag of
+        Nothing -> pure Nothing
+        Just tagName' -> do
+            articleIds <- runDB $ map (tagArticle . entityVal) <$> selectList [TagName ==. tagName'] []
+            pure $ Just (Set.fromList articleIds)
+    let dbFilters =
+            [ArticleDraft !=. True] <>
+            maybe [] (\authorId -> [ArticleAuthor ==. authorId]) mAuthorId
+        targetOffset = (page - 1) * limit
+        chunkSize = max 50 (limit * 3)
+        isVisible entity@(Entity articleId article) =
+            isArticlePubliclyVisible now article &&
+            maybe True (Set.member articleId) taggedArticleIds
+    collectPage dbFilters isVisible mQuery targetOffset limit chunkSize 0 0 []
+
+collectPage
+    :: [Filter Article]
+    -> (Entity Article -> Bool)
+    -> Maybe Text
+    -> Int
+    -> Int
+    -> Int
+    -> Int
+    -> Int
+    -> [Entity Article]
+    -> Handler ([Entity Article], Int)
+collectPage dbFilters includeEntity mQuery targetOffset limit chunkSize dbOffset matchedCount collected = do
+    chunk <- runDB $ selectList dbFilters [Desc ArticleUpdatedAt, OffsetBy dbOffset, LimitTo chunkSize]
+    if null chunk
+        then pure (collected, matchedCount)
+        else do
+            let filteredChunk = applyQueryFilter mQuery $ filter includeEntity chunk
+                matchedCount' = matchedCount + length filteredChunk
+                offsetWithinChunk = max 0 (targetOffset - matchedCount)
+                pageSlice = take (limit - length collected) $ drop offsetWithinChunk filteredChunk
+                collected' = collected <> pageSlice
+            collectPage dbFilters includeEntity mQuery targetOffset limit chunkSize (dbOffset + chunkSize) matchedCount' collected'
 
 applyQueryFilter :: Maybe Text -> [Entity Article] -> [Entity Article]
 applyQueryFilter Nothing articles = articles
@@ -239,7 +249,6 @@ articleSummaryValue tagMap authorMap (Entity articleId article) =
         , "title" .= articleTitle article
         , "slug" .= articleSlug article
         , "excerpt" .= makeBrief 220 (markdownToText $ articleContent article)
-        , "content" .= markdownToText (articleContent article)
         , "tags" .= fromMaybe [] (M.lookup articleId tagMap)
         , "createdAt" .= isoTime (articleCreatedAt article)
         , "updatedAt" .= isoTime (articleUpdatedAt article)
@@ -353,7 +362,7 @@ membershipAccessValue creator mMembership now =
     object
         [ "enabled" .= (userMembershipPriceCents creator > 0)
         , "priceCents" .= userMembershipPriceCents creator
-        , "viewerStatus" .= fmap (membershipStatus . entityVal) mMembership
+        , "viewerStatus" .= fmap (effectiveMembershipStatusAt now . entityVal) mMembership
         , "active" .= maybe False (membershipStatusActiveAt now . entityVal) mMembership
         , "startedAt" .= (fmap isoTime =<< (membershipStartedAt . entityVal <$> mMembership))
         , "expiresAt" .= (fmap isoTime =<< (membershipExpiresAt . entityVal <$> mMembership))
@@ -685,6 +694,88 @@ nonEmptyText :: Text -> Maybe Text
 nonEmptyText value =
     let stripped = T.strip value
     in if stripped == "" then Nothing else Just stripped
+
+validateThemeHtmlTemplate :: Text -> Handler ()
+validateThemeHtmlTemplate rawTemplate = do
+    let template = T.strip rawTemplate
+    unless (template == "") $ do
+        let lowered = T.toLower template
+        when (containsAny lowered ["<script", "<iframe", "<object", "<embed", "<form", "<input", "<button", "<textarea", "<select", "<option", "<link", "<meta", "<base", "<img", "<svg", "<math"]) $
+            apiError status400 "Theme templates may only use safe structural HTML."
+        when ("style=" `T.isInfixOf` lowered || "src=" `T.isInfixOf` lowered) $
+            apiError status400 "Theme templates cannot use inline styles or source attributes."
+        when ("javascript:" `T.isInfixOf` lowered || "data:text/html" `T.isInfixOf` lowered) $
+            apiError status400 "Theme templates cannot embed executable URLs."
+        let tags = extractHtmlTags template
+            invalidTags = filter (`Set.notMember` allowedThemeTags) tags
+        unless (null invalidTags) $
+            apiError status400 "Theme templates include unsupported HTML tags."
+        when (any (hasUnsafeHref template) tags) $
+            apiError status400 "Theme template links must be relative or http/https/mailto URLs."
+
+validateThemeCss :: Text -> Handler ()
+validateThemeCss rawCss = do
+    let css = T.toLower $ T.strip rawCss
+    unless (css == "") $
+        when (containsAny css ["@import", "url(", "expression(", "javascript:", "-moz-binding", "behavior:", "</style", "<style"]) $
+            apiError status400 "Theme CSS contains unsupported constructs."
+
+allowedThemeTags :: Set.Set Text
+allowedThemeTags =
+    Set.fromList
+        [ "a", "article", "blockquote", "code", "div", "em", "footer", "h1", "h2", "h3", "h4"
+        , "header", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "small", "span"
+        , "strong", "time", "ul"
+        ]
+
+extractHtmlTags :: Text -> [Text]
+extractHtmlTags template =
+    mapMaybe extractTagName $ T.splitOn "<" template
+
+extractTagName :: Text -> Maybe Text
+extractTagName chunk =
+    let stripped = T.strip chunk
+    in if stripped == "" || T.isPrefixOf "!" stripped || T.isPrefixOf "?" stripped || T.isPrefixOf "/" stripped
+        then if T.isPrefixOf "/" stripped
+            then extractTagName (T.drop 1 stripped)
+            else Nothing
+        else
+            let name = T.takeWhile (\char -> Char.isAlphaNum char || char == '-') stripped
+            in nonEmptyText name
+
+hasUnsafeHref :: Text -> Text -> Bool
+hasUnsafeHref _ tagName
+    | tagName /= "a" = False
+hasUnsafeHref template _ =
+    any isUnsafeHref $ mapMaybe extractHrefValue (T.splitOn "<a" template)
+
+extractHrefValue :: Text -> Maybe Text
+extractHrefValue chunk = do
+    let lowered = T.toLower chunk
+    hrefStart <- T.stripPrefix "href=" =<< findAttributeStart lowered "href="
+    case T.uncons hrefStart of
+        Just ('"', rest) -> Just $ T.takeWhile (/= '"') rest
+        Just ('\'', rest) -> Just $ T.takeWhile (/= '\'') rest
+        _ -> Just $ T.takeWhile (\char -> not (Char.isSpace char) && char /= '>') hrefStart
+
+findAttributeStart :: Text -> Text -> Maybe Text
+findAttributeStart haystack needle =
+    snd <$> T.breakOnAll needle haystack L.!? 0
+
+isUnsafeHref :: Text -> Bool
+isUnsafeHref rawHref =
+    let href = T.toLower $ T.strip rawHref
+    in href /= "" &&
+        not
+            ( "/" `T.isPrefixOf` href
+            || "#" `T.isPrefixOf` href
+            || "http://" `T.isPrefixOf` href
+            || "https://" `T.isPrefixOf` href
+            || "mailto:" `T.isPrefixOf` href
+            )
+
+containsAny :: Text -> [Text] -> Bool
+containsAny haystack = any (`T.isInfixOf` haystack)
 
 writeUploadedImage :: FileInfo -> Handler String
 writeUploadedImage uploadedFile = do

@@ -1,9 +1,11 @@
 import type { ApiTheme, ApiUser, ThemeOverrides } from './types';
 
 const themeKeys = ['backgroundColor', 'surfaceColor', 'textColor', 'accentColor', 'headingFont', 'bodyFont'] as const;
-const blockedTags = /<\/?(script|iframe|object|embed|form|input|button|textarea|select|option|link|meta|base)[^>]*>/gi;
-const eventHandlers = /\s+on[a-z]+\s*=\s*(".*?"|'.*?'|[^\s>]+)/gi;
-const dangerousUrls = /\s+(href|src)\s*=\s*(['"])\s*(javascript:|data:text\/html)[\s\S]*?\2/gi;
+const allowedThemeTags = new Set([
+  'a', 'article', 'blockquote', 'code', 'div', 'em', 'footer', 'h1', 'h2', 'h3', 'h4', 'header', 'hr',
+  'li', 'main', 'nav', 'ol', 'p', 'pre', 'section', 'small', 'span', 'strong', 'time', 'ul'
+]);
+const allowedThemeAttrs = new Set(['class', 'role', 'aria-label', 'href', 'target', 'rel', 'datetime']);
 
 export function parseThemeOverrides(rawOverrides?: string | null): ThemeOverrides {
   if (!rawOverrides) return {};
@@ -70,18 +72,20 @@ export function renderThemeTemplate(template: string | null | undefined, context
 
 export function sanitizeThemeHtml(html: string): string {
   return html
-    .replace(blockedTags, '')
-    .replace(eventHandlers, '')
-    .replace(dangerousUrls, ' $1="#"')
-    .replace(/style\s*=\s*(".*?expression\(.*?".*?|' .*?expression\(.*?'.*?)/gi, '');
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<[^>]+>/g, (tag) => sanitizeThemeTag(tag));
 }
 
 export function sanitizeThemeCss(css?: string | null): string {
   if (!css) return '';
   return css
     .replace(/@import[^;]+;/gi, '')
+    .replace(/url\s*\([^)]*\)/gi, '')
     .replace(/expression\s*\([^)]*\)/gi, '')
     .replace(/javascript:/gi, '')
+    .replace(/-moz-binding/gi, '')
+    .replace(/behavior\s*:/gi, '')
+    .replace(/position\s*:\s*fixed/gi, '')
     .replace(/<\/?style[^>]*>/gi, '');
 }
 
@@ -98,4 +102,46 @@ export function escapeThemeValue(value: string | number | null | undefined): str
 
 function quoteFont(fontName: string): string {
   return `"${fontName.replace(/"/g, '')}"`;
+}
+
+function sanitizeThemeTag(tag: string): string {
+  const match = tag.match(/^<\s*(\/?)\s*([a-zA-Z0-9-]+)([^>]*)>$/);
+  if (!match) return '';
+
+  const [, closingSlash, rawTagName, rawAttrs] = match;
+  const tagName = rawTagName.toLowerCase();
+  if (!allowedThemeTags.has(tagName)) return '';
+
+  if (closingSlash) {
+    return `</${tagName}>`;
+  }
+
+  const attrs: string[] = [];
+  for (const attrMatch of rawAttrs.matchAll(/([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'>/=`]+)))?/g)) {
+    const attrName = attrMatch[1].toLowerCase();
+    const attrValue = attrMatch[3] ?? attrMatch[4] ?? attrMatch[5] ?? '';
+
+    if (!allowedThemeAttrs.has(attrName)) continue;
+    if (attrName.startsWith('on') || attrName === 'style' || attrName === 'src') continue;
+
+    if (attrName === 'href') {
+      const normalizedHref = attrValue.trim().toLowerCase();
+      const safeHref =
+        normalizedHref.startsWith('/') ||
+        normalizedHref.startsWith('#') ||
+        normalizedHref.startsWith('http://') ||
+        normalizedHref.startsWith('https://') ||
+        normalizedHref.startsWith('mailto:');
+      if (!safeHref) continue;
+    }
+
+    const escapedValue = escapeThemeValue(attrValue);
+    attrs.push(`${attrName}="${escapedValue}"`);
+  }
+
+  if (attrs.some((attr) => attr.startsWith('target=') && !attrs.some((candidate) => candidate.startsWith('rel=')))) {
+    attrs.push('rel="noopener noreferrer"');
+  }
+
+  return attrs.length > 0 ? `<${tagName} ${attrs.join(' ')}>` : `<${tagName}>`;
 }

@@ -8,7 +8,7 @@ spec :: Spec
 spec = withApp $ do
     describe "Auth API" $ do
         it "registers a user and starts a session" $ do
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl ApiAuthRegisterR
                 addPostParam "ident" "new-writer"
@@ -37,7 +37,7 @@ spec = withApp $ do
         it "logs in and logs out an existing user" $ do
             _ <- createUserWithPassword "login-user" "password123"
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl ApiAuthLoginR
                 addPostParam "ident" "login-user"
@@ -51,7 +51,7 @@ spec = withApp $ do
             bodyContains "\"authenticated\":true"
             bodyContains "\"ident\":\"login-user\""
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl ApiAuthLogoutR
 
@@ -65,7 +65,7 @@ spec = withApp $ do
         it "rejects duplicate usernames during registration" $ do
             _ <- createUser "taken-user"
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl ApiAuthRegisterR
                 addPostParam "ident" "taken-user"
@@ -78,7 +78,7 @@ spec = withApp $ do
         it "rejects invalid passwords during login" $ do
             _ <- createUserWithPassword "member" "password123"
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl ApiAuthLoginR
                 addPostParam "ident" "member"
@@ -91,7 +91,7 @@ spec = withApp $ do
             userEntity <- createUser "plan-member"
             authenticateAs userEntity
 
-            request $ do
+            requestWithCsrf $ do
                 setMethod "POST"
                 setUrl ApiMePlanR
                 addPostParam "plan" "writer-pro"

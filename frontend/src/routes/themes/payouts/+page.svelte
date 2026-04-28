@@ -1,7 +1,7 @@
 <script lang="ts">
   import { base } from '$app/paths';
   import { onMount } from 'svelte';
-  import { apiFetch } from '$lib/api';
+  import { apiFetch, apiFormPost } from '$lib/api';
   import type { ThemePayoutsResponse } from '$lib/types';
 
   let payouts = $state<ThemePayoutsResponse | null>(null);
@@ -80,24 +80,13 @@
       return;
     }
     const note = window.prompt('Payout request note (optional)', initialNote) ?? '';
-    const response = await fetch('/api/me/theme/payout-request', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: new URLSearchParams({ note }).toString()
-    });
-    if (!response.ok) {
-      try {
-        const payload = await response.json();
-        status = typeof payload?.message === 'string' ? payload.message : 'Payout request failed.';
-      } catch {
-        status = 'Payout request failed.';
-      }
-      return;
+    try {
+      await apiFormPost('/api/me/theme/payout-request', new URLSearchParams({ note }));
+      await loadPayouts();
+      status = 'Payout request submitted.';
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Payout request failed.';
     }
-    await loadPayouts();
-    status = 'Payout request submitted.';
   }
 
   onMount(() => {

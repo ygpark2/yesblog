@@ -1,6 +1,6 @@
 <script lang="ts">
   import { base } from '$app/paths';
-  import { env } from '$env/dynamic/public';
+  import { apiFetch, apiFormPost, apiGet } from '$lib/api';
   import { onMount, tick } from 'svelte';
   import type {
     AdminDashboard,
@@ -12,8 +12,6 @@
     ThemePayoutRequestItem,
     ThemeReviewItem
   } from '$lib/types';
-
-  const backendBaseUrl = env.PUBLIC_YESBLOG_API_BASE_URL || '';
 
   type AdminSection = 'overview' | 'articles' | 'comments' | 'users' | 'themes' | 'theme-review' | 'theme-orders' | 'theme-payouts' | 'membership-orders';
 
@@ -92,28 +90,8 @@
   let themeActive = $state(true);
   let themeFormEl = $state<HTMLElement | undefined>();
 
-  async function readErrorMessage(response: Response, fallback: string) {
-    try {
-      const payload = await response.json();
-      if (typeof payload?.message === 'string' && payload.message.trim()) {
-        return payload.message;
-      }
-    } catch {
-      return fallback;
-    }
-    return fallback;
-  }
-
   async function fetchDashboard() {
-    const response = await fetch(`${backendBaseUrl}/api/admin/dashboard`, {
-      credentials: 'include'
-    });
-
-    if (!response.ok) {
-      throw new Error(await readErrorMessage(response, 'Failed to load admin dashboard.'));
-    }
-
-    dashboard = await response.json();
+    dashboard = await apiGet<AdminDashboard>('/api/admin/dashboard');
     syncSelectedThemeFromUrl();
     status = 'Admin overview is up to date.';
   }
@@ -181,45 +159,21 @@
   }
 
   async function fetchThemeReviews() {
-    const response = await fetch(`${backendBaseUrl}/api/admin/themes/review`, {
-      credentials: 'include'
-    });
-
-    if (!response.ok) {
-      throw new Error(await readErrorMessage(response, 'Failed to load theme review queue.'));
-    }
-
-    const data: { items: ThemeReviewItem[] } = await response.json();
+    const data = await apiGet<{ items: ThemeReviewItem[] }>('/api/admin/themes/review');
     reviews = data.items;
     syncSelectedReviewFromUrl();
     status = `${reviews.length} themes waiting for review.`;
   }
 
   async function fetchThemeOrders() {
-    const response = await fetch(`${backendBaseUrl}/api/admin/theme/orders`, {
-      credentials: 'include'
-    });
-
-    if (!response.ok) {
-      throw new Error(await readErrorMessage(response, 'Failed to load theme orders.'));
-    }
-
-    const data: { items: ThemeOrderItem[] } = await response.json();
+    const data = await apiGet<{ items: ThemeOrderItem[] }>('/api/admin/theme/orders');
     orders = data.items;
     syncSelectedOrderFromUrl();
     status = `${orders.length} theme orders loaded.`;
   }
 
   async function fetchMembershipOrders() {
-    const response = await fetch(`${backendBaseUrl}/api/admin/membership/orders`, {
-      credentials: 'include'
-    });
-
-    if (!response.ok) {
-      throw new Error(await readErrorMessage(response, 'Failed to load membership orders.'));
-    }
-
-    const data: { items: MembershipOrderItem[] } = await response.json();
+    const data = await apiGet<{ items: MembershipOrderItem[] }>('/api/admin/membership/orders');
     membershipOrders = data.items;
     syncSelectedMembershipOrderFromUrl();
     status = `${membershipOrders.length} membership orders loaded.`;
@@ -361,15 +315,7 @@
   }
 
   async function fetchThemePayouts() {
-    const response = await fetch(`${backendBaseUrl}/api/admin/theme/payouts`, {
-      credentials: 'include'
-    });
-
-    if (!response.ok) {
-      throw new Error(await readErrorMessage(response, 'Failed to load theme payouts.'));
-    }
-
-    const data: AdminThemePayoutsResponse = await response.json();
+    const data = await apiGet<AdminThemePayoutsResponse>('/api/admin/theme/payouts');
     payouts = data.items;
     payoutSellers = data.sellers;
     payoutSummary = data.summary;
@@ -440,43 +386,34 @@
   async function deleteArticle(articleId: number) {
     if (!window.confirm('Delete this article and its comments permanently?')) return;
     status = 'Deleting article…';
-    const response = await fetch(`${backendBaseUrl}/api/admin/article/${articleId}/delete`, {
-      method: 'POST',
-      credentials: 'include'
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Article delete failed.');
-      return;
+    try {
+      await apiFormPost(`/api/admin/article/${articleId}/delete`, new URLSearchParams());
+      await fetchDashboard();
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Article delete failed.';
     }
-    await fetchDashboard();
   }
 
   async function deleteComment(commentId: number) {
     if (!window.confirm('Delete this comment permanently?')) return;
     status = 'Deleting comment…';
-    const response = await fetch(`${backendBaseUrl}/api/admin/comment/${commentId}/delete`, {
-      method: 'POST',
-      credentials: 'include'
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Comment delete failed.');
-      return;
+    try {
+      await apiFormPost(`/api/admin/comment/${commentId}/delete`, new URLSearchParams());
+      await fetchDashboard();
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Comment delete failed.';
     }
-    await fetchDashboard();
   }
 
   async function deleteUser(userId: number, ident: string) {
     if (!window.confirm(`Delete user ${ident} and all authored articles permanently?`)) return;
     status = 'Deleting user…';
-    const response = await fetch(`${backendBaseUrl}/api/admin/user/${userId}/delete`, {
-      method: 'POST',
-      credentials: 'include'
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'User delete failed.');
-      return;
+    try {
+      await apiFormPost(`/api/admin/user/${userId}/delete`, new URLSearchParams());
+      await fetchDashboard();
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'User delete failed.';
     }
-    await fetchDashboard();
   }
 
   async function editTheme(theme: ApiTheme) {
@@ -547,48 +484,35 @@
       active: String(themeActive)
     });
     const path = editingThemeId ? `/api/admin/theme/${editingThemeId}/update` : '/api/admin/themes';
-    const response = await fetch(`${backendBaseUrl}${path}`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Theme save failed.');
-      return;
+    try {
+      await apiFormPost(path, payload);
+      resetThemeForm();
+      await fetchDashboard();
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Theme save failed.';
     }
-    resetThemeForm();
-    await fetchDashboard();
   }
 
   async function deleteTheme(themeId: number, name: string) {
     if (!window.confirm(`Delete theme ${name}? Users using it will return to the default theme.`)) return;
     status = 'Deleting theme...';
-    const response = await fetch(`${backendBaseUrl}/api/admin/theme/${themeId}/delete`, {
-      method: 'POST',
-      credentials: 'include'
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Theme delete failed.');
-      return;
+    try {
+      await apiFormPost(`/api/admin/theme/${themeId}/delete`, new URLSearchParams());
+      if (editingThemeId === themeId) resetThemeForm();
+      await fetchDashboard();
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Theme delete failed.';
     }
-    if (editingThemeId === themeId) resetThemeForm();
-    await fetchDashboard();
   }
 
   async function approveTheme(themeId: number) {
     status = 'Approving theme...';
-    const response = await fetch(`${backendBaseUrl}/api/admin/theme/${themeId}/approve`, {
-      method: 'POST',
-      credentials: 'include'
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Theme approval failed.');
-      return;
+    try {
+      await apiFormPost(`/api/admin/theme/${themeId}/approve`, new URLSearchParams());
+      await Promise.all([fetchDashboard(), fetchThemeReviews()]);
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Theme approval failed.';
     }
-    await Promise.all([fetchDashboard(), fetchThemeReviews()]);
   }
 
   async function rejectTheme(themeId: number) {
@@ -599,37 +523,23 @@
     }
     status = 'Rejecting theme...';
     const payload = new URLSearchParams({ note });
-    const response = await fetch(`${backendBaseUrl}/api/admin/theme/${themeId}/reject`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Theme rejection failed.');
-      return;
+    try {
+      await apiFormPost(`/api/admin/theme/${themeId}/reject`, payload);
+      await Promise.all([fetchDashboard(), fetchThemeReviews()]);
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Theme rejection failed.';
     }
-    await Promise.all([fetchDashboard(), fetchThemeReviews()]);
   }
 
   async function updateOrder(orderId: number, nextStatus: string) {
     status = `Updating order to ${nextStatus}...`;
     const payload = new URLSearchParams({ status: nextStatus });
-    const response = await fetch(`${backendBaseUrl}/api/admin/theme/order/${orderId}/update`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Order update failed.');
-      return;
+    try {
+      await apiFormPost(`/api/admin/theme/order/${orderId}/update`, payload);
+      await fetchThemeOrders();
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Order update failed.';
     }
-    await fetchThemeOrders();
   }
 
   async function updateMembershipOrder(orderId: number, nextStatus: string) {
@@ -644,19 +554,12 @@
       return;
     }
     const payload = new URLSearchParams({ status: nextStatus, note });
-    const response = await fetch(`${backendBaseUrl}/api/admin/membership/order/${orderId}/update`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Membership order update failed.');
-      return;
+    try {
+      await apiFormPost(`/api/admin/membership/order/${orderId}/update`, payload);
+      await fetchMembershipOrders();
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Membership order update failed.';
     }
-    await fetchMembershipOrders();
   }
 
   function filteredMembershipOrders() {
@@ -725,19 +628,12 @@
       return;
     }
     const payload = new URLSearchParams({ status: nextStatus, note });
-    const response = await fetch(`${backendBaseUrl}/api/admin/theme/payout/${payoutId}/update`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: payload.toString()
-    });
-    if (!response.ok) {
-      status = await readErrorMessage(response, 'Payout update failed.');
-      return;
+    try {
+      await apiFormPost(`/api/admin/theme/payout/${payoutId}/update`, payload);
+      await fetchThemePayouts();
+    } catch (error) {
+      status = error instanceof Error ? error.message : 'Payout update failed.';
     }
-    await fetchThemePayouts();
   }
 
   function normalizeAdminQueryForSection() {

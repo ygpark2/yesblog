@@ -423,6 +423,10 @@ readThemeInput mThemeId = do
         apiError status400 "Theme name is required."
     when (slug == "") $
         apiError status400 "Theme slug is required."
+    validateThemeHtmlTemplate rawHeaderTemplate
+    validateThemeHtmlTemplate rawBodyTemplate
+    validateThemeHtmlTemplate rawFooterTemplate
+    validateThemeCss rawCustomCss
     pure Theme
         { themeName = name
         , themeSlug = slug

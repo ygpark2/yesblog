@@ -25,6 +25,7 @@
 /api/me/domains            ApiMeDomainsR  GET POST
 /api/me/memberships        ApiMeMembershipsR GET
 /api/me/membership/orders  ApiMeMembershipOrdersR GET
+/api/me/membership/refresh ApiMeMembershipRefreshR POST
 /api/me/membership/order/#MembershipOrderId/update ApiMeMembershipOrderUpdateR POST
 /api/me/membership/#MembershipId/update ApiMeMembershipUpdateR POST
 /api/me/theme              ApiMeThemeR    POST

@@ -15,10 +15,8 @@ getApiPostsR = do
     mTag <- cleanOptionalText <$> lookupGetParam "tag"
     mAuthorIdent <- cleanOptionalText <$> lookupGetParam "author"
     mQuery <- cleanOptionalText <$> lookupGetParam "q"
-    filteredArticles <- selectPublishedArticles mTag mAuthorIdent mQuery
-    let total = length filteredArticles
-        offset = (page - 1) * limit
-        pagedArticles = take limit $ drop offset filteredArticles
+    (pagedArticles, total) <- selectPublishedArticlesPage mTag mAuthorIdent mQuery page limit
+    let offset = (page - 1) * limit
     articleTags <- loadTagMap (map entityKey pagedArticles)
     authors <- loadAuthorMap pagedArticles
     returnJson $ object
