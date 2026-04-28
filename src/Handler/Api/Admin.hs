@@ -4,12 +4,11 @@ module Handler.Api.Admin where
 
 import Import
 import Handler.Api.Shared
+import Handler.Api.ThemeSupport
 import Database.Persist.Sql (fromSqlKey)
-import qualified Data.Char as Char
 import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import qualified Data.Text as T
-import qualified Data.Text.Read as TR
 import Data.Time (addUTCTime)
 
 getApiAdminDashboardR :: Handler Value
@@ -400,88 +399,9 @@ readThemeInput mThemeId = do
         Nothing -> pure Nothing
         Just themeId -> runDB $ get themeId
     now <- liftIO getCurrentTime
-    name <- T.strip <$> runInputPost (ireq textField "name")
-    rawSlug <- T.strip <$> runInputPost (ireq textField "slug")
-    rawDescription <- runInputPost $ fromMaybe "" <$> iopt textField "description"
-    backgroundColor <- normalizeColorInput =<< runInputPost (ireq textField "backgroundColor")
-    surfaceColor <- normalizeColorInput =<< runInputPost (ireq textField "surfaceColor")
-    textColor <- normalizeColorInput =<< runInputPost (ireq textField "textColor")
-    accentColor <- normalizeColorInput =<< runInputPost (ireq textField "accentColor")
-    rawHeadingFont <- runInputPost $ fromMaybe "" <$> iopt textField "headingFont"
-    rawBodyFont <- runInputPost $ fromMaybe "" <$> iopt textField "bodyFont"
-    rawHeaderTemplate <- runInputPost $ fromMaybe "" <$> iopt textField "headerTemplate"
-    rawBodyTemplate <- runInputPost $ fromMaybe "" <$> iopt textField "bodyTemplate"
-    rawFooterTemplate <- runInputPost $ fromMaybe "" <$> iopt textField "footerTemplate"
-    rawCustomCss <- runInputPost $ fromMaybe "" <$> iopt textField "customCss"
-    rawPriceCents <- runInputPost $ fromMaybe "0" <$> iopt textField "priceCents"
-    rawStatus <- runInputPost $ fromMaybe "published" <$> iopt textField "status"
-    rawLicense <- runInputPost $ fromMaybe "" <$> iopt textField "license"
-    rawActive <- runInputPost $ fromMaybe "true" <$> iopt textField "active"
-    let slug = normalizeThemeSlug rawSlug
-        status = normalizeThemeStatus rawStatus
-    when (name == "") $
-        apiError status400 "Theme name is required."
-    when (slug == "") $
-        apiError status400 "Theme slug is required."
-    validateThemeHtmlTemplate rawHeaderTemplate
-    validateThemeHtmlTemplate rawBodyTemplate
-    validateThemeHtmlTemplate rawFooterTemplate
-    validateThemeCss rawCustomCss
-    pure Theme
-        { themeName = name
-        , themeSlug = slug
-        , themeDescription = normalizeOptionalTextarea $ Just rawDescription
-        , themeAuthor = existingTheme >>= themeAuthor
-        , themeParent = existingTheme >>= themeParent
-        , themeBackgroundColor = backgroundColor
-        , themeSurfaceColor = surfaceColor
-        , themeTextColor = textColor
-        , themeAccentColor = accentColor
-        , themeHeadingFont = nonEmptyText rawHeadingFont
-        , themeBodyFont = nonEmptyText rawBodyFont
-        , themeHeaderTemplate = normalizeOptionalTextarea $ Just rawHeaderTemplate
-        , themeBodyTemplate = normalizeOptionalTextarea $ Just rawBodyTemplate
-        , themeFooterTemplate = normalizeOptionalTextarea $ Just rawFooterTemplate
-        , themeCustomCss = normalizeOptionalTextarea $ Just rawCustomCss
-        , themePriceCents = parseNonNegativeInt rawPriceCents
-        , themeStatus = status
-        , themeLicense = nonEmptyText rawLicense
-        , themeActive = parseThemeActive rawActive
-        , themeCreatedAt = maybe now themeCreatedAt existingTheme
-        , themeUpdatedAt = now
-        }
-
-normalizeColorInput :: Text -> Handler Text
-normalizeColorInput rawValue = do
-    let value = T.strip rawValue
-    when (value == "") $
-        apiError status400 "Theme colors are required."
-    pure value
-
-normalizeThemeSlug :: Text -> Text
-normalizeThemeSlug source =
-    T.intercalate "-" $
-        filter (/= "") $
-            map
-                (T.filter (\char -> Char.isAlphaNum char || char == '-'))
-                (T.words $ T.map (\char -> if Char.isAlphaNum char then char else ' ') $ T.toLower source)
-
-parseThemeActive :: Text -> Bool
-parseThemeActive rawValue =
-    T.toLower (T.strip rawValue) `elem` ["true", "1", "on", "yes"]
-
-normalizeThemeStatus :: Text -> Text
-normalizeThemeStatus rawValue =
-    let value = T.toLower $ T.strip rawValue
-    in if value `elem` ["draft", "review", "published", "suspended"]
-        then value
-        else "review"
-
-parseNonNegativeInt :: Text -> Int
-parseNonNegativeInt rawValue =
-    case TR.decimal (T.strip rawValue) of
-        Right (value, _) -> max 0 value
-        Left _ -> 0
+    draft <- readThemeDraftInput
+    adminOptions <- readThemeAdminOptions
+    pure $ buildAdminTheme existingTheme now draft adminOptions
 
 normalizeMembershipOrderStatus :: Text -> Text
 normalizeMembershipOrderStatus rawStatus =

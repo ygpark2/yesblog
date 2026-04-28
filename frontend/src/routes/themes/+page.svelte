@@ -1,8 +1,24 @@
 <script lang="ts">
   import { base } from '$app/paths';
-  import { apiFormPost, apiGet } from '$lib/api';
   import { buildThemeStyle } from '$lib/theme';
-  import type { ApiSession, ThemeMarketplaceItem } from '$lib/types';
+  import {
+    applyMarketplaceTheme,
+    cardThemeActionLabel,
+    createThemeDraft,
+    fetchThemeMarketplaceItems,
+    fetchThemeMarketplaceSession,
+    filterThemeMarketplaceItems,
+    forkMarketplaceTheme,
+    primaryThemeActionLabel,
+    purchaseMarketplaceTheme,
+    reportThemeIssue,
+    resolveSelectedThemeId,
+    saveThemeReview,
+    submitThemeDraft,
+    type ThemeOwnershipFilter,
+    type ThemeSortMode
+  } from '$lib/themeMarketplace';
+  import type { ThemeMarketplaceItem } from '$lib/types';
   import { onMount } from 'svelte';
   const headerTemplatePlaceholder = '<header><p>{{author.name}}</p><h1>{{post.title}}</h1></header>';
   const bodyTemplatePlaceholder = "<article class='prose article-prose'>{{post.content}}</article>";
@@ -13,8 +29,8 @@
   let status = $state('Loading theme marketplace...');
   let loading = $state(true);
   let query = $state('');
-  let ownershipFilter = $state<'all' | 'owned' | 'free' | 'paid' | 'remix'>('all');
-  let sortMode = $state<'latest' | 'price-asc' | 'price-desc' | 'rating'>('latest');
+  let ownershipFilter = $state<ThemeOwnershipFilter>('all');
+  let sortMode = $state<ThemeSortMode>('latest');
   let selectedThemeId = $state<number | null>(null);
   let currentThemeId = $state<number | null>(null);
   let authenticated = $state(false);
@@ -22,44 +38,10 @@
   let reviewText = $state('');
   let reportReason = $state('');
   let reportDetails = $state('');
-  let createName = $state('');
-  let createSlug = $state('');
-  let createDescription = $state('');
-  let createBackgroundColor = $state('#f8f0dc');
-  let createSurfaceColor = $state('#fffef7');
-  let createTextColor = $state('#111111');
-  let createAccentColor = $state('#ffe11a');
-  let createHeadingFont = $state('Cormorant Garamond');
-  let createBodyFont = $state('Space Grotesk');
-  let createHeaderTemplate = $state('');
-  let createBodyTemplate = $state('');
-  let createFooterTemplate = $state('');
-  let createCustomCss = $state('');
-  let createPriceCents = $state('0');
+  let createDraft = $state(createThemeDraft());
 
   const filteredItems = $derived(
-    [...items]
-      .filter((item) => {
-        const normalizedQuery = query.trim().toLowerCase();
-        const matchesQuery =
-          !normalizedQuery ||
-          item.theme.name.toLowerCase().includes(normalizedQuery) ||
-          item.theme.slug.toLowerCase().includes(normalizedQuery) ||
-          (item.theme.description ?? '').toLowerCase().includes(normalizedQuery);
-        const matchesOwnership =
-          ownershipFilter === 'all' ||
-          (ownershipFilter === 'owned' && item.owned) ||
-          (ownershipFilter === 'free' && item.theme.priceCents === 0) ||
-          (ownershipFilter === 'paid' && item.theme.priceCents > 0) ||
-          (ownershipFilter === 'remix' && Boolean(item.theme.parentId));
-        return matchesQuery && matchesOwnership;
-      })
-      .sort((left, right) => {
-        if (sortMode === 'price-asc') return left.theme.priceCents - right.theme.priceCents;
-        if (sortMode === 'price-desc') return right.theme.priceCents - left.theme.priceCents;
-        if (sortMode === 'rating') return (right.rating?.averageRating ?? 0) - (left.rating?.averageRating ?? 0);
-        return new Date(right.theme.updatedAt).getTime() - new Date(left.theme.updatedAt).getTime();
-      })
+    filterThemeMarketplaceItems(items, { query, ownershipFilter, sortMode })
   );
 
   const selectedItem = $derived(
@@ -67,16 +49,13 @@
   );
 
   async function fetchMarketplace() {
-    const data = await apiGet<{ items: ThemeMarketplaceItem[] }>('/api/themes/marketplace');
-    items = data.items;
-    selectedThemeId = selectedThemeId && data.items.some((item) => item.theme.id === selectedThemeId)
-      ? selectedThemeId
-      : data.items[0]?.theme.id ?? null;
+    items = await fetchThemeMarketplaceItems();
+    selectedThemeId = resolveSelectedThemeId(items, selectedThemeId);
     status = `${items.length} themes available`;
   }
 
   async function refreshSession() {
-    const session = await apiGet<ApiSession>('/api/session');
+    const session = await fetchThemeMarketplaceSession();
     authenticated = session.authenticated;
     currentThemeId = typeof session.user?.themeId === 'number' ? session.user.themeId : null;
   }
@@ -84,8 +63,7 @@
   async function applyTheme(themeId: number | null) {
     status = themeId ? 'Applying theme...' : 'Clearing theme...';
     try {
-      const payload = new URLSearchParams({ themeId: themeId ? String(themeId) : '' });
-      await apiFormPost('/api/me/theme', payload);
+      await applyMarketplaceTheme(themeId);
       currentThemeId = themeId;
       status = themeId ? 'Theme applied to your blog.' : 'Theme cleared.';
     } catch (error) {
@@ -96,10 +74,7 @@
   async function purchaseTheme(themeId: number) {
     status = 'Creating order...';
     try {
-      const data = await apiFormPost<{ requiresConfirmation?: boolean }>(
-        `/api/theme/${themeId}/purchase`,
-        new URLSearchParams()
-      );
+      const data = await purchaseMarketplaceTheme(themeId);
       if (data.requiresConfirmation) {
         status = 'Order created. Payment must be verified by an administrator before the theme is unlocked.';
       } else {
@@ -117,13 +92,8 @@
     const slug = window.prompt('Choose a slug for this remix', `${item.theme.slug}-remix`);
     if (!slug) return;
     status = 'Creating remix...';
-    const payload = new URLSearchParams({
-      name,
-      slug,
-      priceCents: '0'
-    });
     try {
-      await apiFormPost(`/api/theme/${item.theme.id}/fork`, payload);
+      await forkMarketplaceTheme(item.theme.id, { name, slug });
       await fetchMarketplace();
       status = 'Remix created and sent to review.';
     } catch (error) {
@@ -133,31 +103,9 @@
 
   async function createTheme() {
     status = 'Submitting theme for review...';
-    const payload = new URLSearchParams({
-      name: createName,
-      slug: createSlug,
-      description: createDescription,
-      backgroundColor: createBackgroundColor,
-      surfaceColor: createSurfaceColor,
-      textColor: createTextColor,
-      accentColor: createAccentColor,
-      headingFont: createHeadingFont,
-      bodyFont: createBodyFont,
-      headerTemplate: createHeaderTemplate,
-      bodyTemplate: createBodyTemplate,
-      footerTemplate: createFooterTemplate,
-      customCss: createCustomCss,
-      priceCents: createPriceCents
-    });
     try {
-      await apiFormPost('/api/themes/create', payload);
-      createName = '';
-      createSlug = '';
-      createDescription = '';
-      createHeaderTemplate = '';
-      createBodyTemplate = '';
-      createFooterTemplate = '';
-      createCustomCss = '';
+      await submitThemeDraft(createDraft);
+      createDraft = createThemeDraft();
       await fetchMarketplace();
       status = 'Theme submitted for admin review.';
     } catch (error) {
@@ -168,12 +116,8 @@
   async function saveReview() {
     if (!selectedItem) return;
     status = 'Saving review...';
-    const payload = new URLSearchParams({
-      rating: reviewRating,
-      review: reviewText
-    });
     try {
-      await apiFormPost(`/api/theme/${selectedItem.theme.id}/review`, payload);
+      await saveThemeReview(selectedItem.theme.id, reviewRating, reviewText);
       await fetchMarketplace();
       status = 'Review saved.';
     } catch (error) {
@@ -184,12 +128,8 @@
   async function reportTheme() {
     if (!selectedItem) return;
     status = 'Sending report...';
-    const payload = new URLSearchParams({
-      reason: reportReason,
-      details: reportDetails
-    });
     try {
-      await apiFormPost(`/api/theme/${selectedItem.theme.id}/report`, payload);
+      await reportThemeIssue(selectedItem.theme.id, reportReason, reportDetails);
       reportReason = '';
       reportDetails = '';
       await fetchMarketplace();
@@ -289,11 +229,11 @@
             <button class="action-link" type="button" onclick={() => forkTheme(selectedItem)}>Remix</button>
           {:else if selectedItem.owned}
             <button class="action-link studio-primary-action" type="button" onclick={() => applyTheme(selectedItem.theme.id)}>
-              {currentThemeId === selectedItem.theme.id ? 'Applied' : 'Apply to blog'}
+              {primaryThemeActionLabel(selectedItem, currentThemeId)}
             </button>
           {:else}
             <button class="action-link studio-primary-action" type="button" onclick={() => purchaseTheme(selectedItem.theme.id)}>
-              {selectedItem.theme.priceCents === 0 ? 'Apply free theme' : 'Buy theme'}
+              {primaryThemeActionLabel(selectedItem, currentThemeId)}
             </button>
           {/if}
         </div>
@@ -345,49 +285,49 @@
       <div class="theme-submit-grid">
         <label>
           <span>Name</span>
-          <input class="search-input studio-input" bind:value={createName} placeholder="Midnight Notes" />
+          <input class="search-input studio-input" bind:value={createDraft.name} placeholder="Midnight Notes" />
         </label>
         <label>
           <span>Slug</span>
-          <input class="search-input studio-input" bind:value={createSlug} placeholder="midnight-notes" />
+          <input class="search-input studio-input" bind:value={createDraft.slug} placeholder="midnight-notes" />
         </label>
         <label class="theme-submit-wide">
           <span>Description</span>
-          <textarea class="studio-image-note" bind:value={createDescription}></textarea>
+          <textarea class="studio-image-note" bind:value={createDraft.description}></textarea>
         </label>
         <label>
           <span>Background</span>
-          <input class="search-input studio-input" bind:value={createBackgroundColor} />
+          <input class="search-input studio-input" bind:value={createDraft.backgroundColor} />
         </label>
         <label>
           <span>Surface</span>
-          <input class="search-input studio-input" bind:value={createSurfaceColor} />
+          <input class="search-input studio-input" bind:value={createDraft.surfaceColor} />
         </label>
         <label>
           <span>Text</span>
-          <input class="search-input studio-input" bind:value={createTextColor} />
+          <input class="search-input studio-input" bind:value={createDraft.textColor} />
         </label>
         <label>
           <span>Accent</span>
-          <input class="search-input studio-input" bind:value={createAccentColor} />
+          <input class="search-input studio-input" bind:value={createDraft.accentColor} />
         </label>
         <label>
           <span>Heading font</span>
-          <input class="search-input studio-input" bind:value={createHeadingFont} />
+          <input class="search-input studio-input" bind:value={createDraft.headingFont} />
         </label>
         <label>
           <span>Body font</span>
-          <input class="search-input studio-input" bind:value={createBodyFont} />
+          <input class="search-input studio-input" bind:value={createDraft.bodyFont} />
         </label>
         <label>
           <span>Price cents</span>
-          <input class="search-input studio-input" bind:value={createPriceCents} />
+          <input class="search-input studio-input" bind:value={createDraft.priceCents} />
         </label>
         <label class="theme-submit-wide">
           <span>Header template</span>
           <textarea
             class="studio-image-note"
-            bind:value={createHeaderTemplate}
+            bind:value={createDraft.headerTemplate}
             placeholder={headerTemplatePlaceholder}
           ></textarea>
         </label>
@@ -395,7 +335,7 @@
           <span>Body template</span>
           <textarea
             class="studio-image-note"
-            bind:value={createBodyTemplate}
+            bind:value={createDraft.bodyTemplate}
             placeholder={bodyTemplatePlaceholder}
           ></textarea>
         </label>
@@ -403,7 +343,7 @@
           <span>Footer template</span>
           <textarea
             class="studio-image-note"
-            bind:value={createFooterTemplate}
+            bind:value={createDraft.footerTemplate}
             placeholder={footerTemplatePlaceholder}
           ></textarea>
         </label>
@@ -411,7 +351,7 @@
           <span>Custom CSS</span>
           <textarea
             class="studio-image-note"
-            bind:value={createCustomCss}
+            bind:value={createDraft.customCss}
             placeholder={customCssPlaceholder}
           ></textarea>
         </label>
@@ -448,11 +388,11 @@
               <button class="action-link" type="button" onclick={() => forkTheme(item)}>Remix</button>
             {:else if item.owned}
               <button class="action-link studio-primary-action" type="button" onclick={() => applyTheme(item.theme.id)}>
-                {currentThemeId === item.theme.id ? 'Applied' : 'Apply'}
+                {cardThemeActionLabel(item, currentThemeId)}
               </button>
             {:else}
               <button class="action-link studio-primary-action" type="button" onclick={() => purchaseTheme(item.theme.id)}>
-                {item.theme.priceCents === 0 ? 'Apply free theme' : 'Buy theme'}
+                {cardThemeActionLabel(item, currentThemeId)}
               </button>
             {/if}
           </div>
